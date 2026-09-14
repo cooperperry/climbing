@@ -1,8 +1,7 @@
 import Foundation
 import SwiftData
 
-/// A single logged climb within a session: its grade, how many attempts it
-/// took, the outcome, and the movement style.
+/// A single logged climb: grade, attempts, outcome, and optional hold/wall tags.
 @Model
 final class ClimbLog {
     /// The session this climb belongs to.
@@ -21,8 +20,9 @@ final class ClimbLog {
 
     var outcome: ClimbOutcome
 
-    /// The movement/hold character of the climb.
-    var style: ClimbStyle
+    /// Hold / movement character. Optional — most goes are logged as grade +
+    /// outcome only; tag later if you care. Optional also migrates legacy rows.
+    var style: ClimbStyle?
 
     /// The wall angle of the climb.
     ///
@@ -33,7 +33,8 @@ final class ClimbLog {
     /// non-optional value that treats legacy `nil` as `.vertical`.
     var angle: ClimbAngle?
 
-    /// The wall angle, defaulting legacy rows (stored `nil`) to vertical.
+    /// Wall angle when tagged; untagged / legacy `nil` is not assumed to be vertical
+    /// in the UI. This fallback is only for call sites that still need a value.
     var wallAngle: ClimbAngle { angle ?? .vertical }
 
     var loggedAt: Date
@@ -61,8 +62,8 @@ final class ClimbLog {
         gradeLabel: String,
         attempts: Int = 1,
         outcome: ClimbOutcome,
-        style: ClimbStyle,
-        angle: ClimbAngle = .vertical,
+        style: ClimbStyle? = nil,
+        angle: ClimbAngle? = nil,
         session: ClimbingSession? = nil,
         gradeScale: CustomGradeScale? = nil,
         loggedAt: Date = .now

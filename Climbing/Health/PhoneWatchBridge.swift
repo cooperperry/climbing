@@ -166,9 +166,9 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             ?? defaultScale(in: context)?.grades.first
         guard let grade else { return }
         let outcome = ClimbOutcome(rawValue: message[WatchSync.outcome] as? String ?? "") ?? .attempt
-        let style = ClimbStyle(rawValue: message[WatchSync.style] as? String ?? "") ?? selectedStyle
+        let style = (message[WatchSync.style] as? String).flatMap(ClimbStyle.init(rawValue:))
+        if let style { selectedStyle = style }
         selectedGrade = grade
-        selectedStyle = style
         let previousLogAt = session.logs.map(\.loggedAt).max()
         let entry = ClimbLog(
             gradeLabel: grade,
@@ -264,8 +264,9 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         let sends = allLogs.filter { $0.outcome.isCompletion }
         let hardest = sends.max { $0.gradeIndex < $1.gradeIndex }?.gradeLabel
         let insight = StyleWeakSpotMath.insight(
-            logs: allLogs.map {
-                StyleLog(style: $0.style, outcome: $0.outcome, loggedAt: $0.loggedAt)
+            logs: allLogs.compactMap { log in
+                guard let style = log.style else { return nil }
+                return StyleLog(style: style, outcome: log.outcome, loggedAt: log.loggedAt)
             },
             now: Date()
         )
@@ -283,7 +284,7 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
                     id: $0.loggedAt.timeIntervalSince1970.description,
                     grade: $0.gradeLabel,
                     outcome: $0.outcome.rawValue,
-                    style: $0.style.rawValue,
+                    style: $0.style?.rawValue ?? "",
                     loggedAt: $0.loggedAt.timeIntervalSince1970
                 )
             },

@@ -11,7 +11,6 @@ final class WatchStore: NSObject, WCSessionDelegate {
 
     var snapshot = WatchSnapshot.empty
     var selectedGrade: String?
-    var selectedStyle: ClimbStyle = .crimp
     var toast: String?
     var logPulse = 0
     var restPlan: RestPlan?
@@ -71,7 +70,6 @@ final class WatchStore: NSObject, WCSessionDelegate {
             WatchSync.kind: WatchSync.log,
             WatchSync.outcome: outcome.rawValue,
             WatchSync.grade: grade,
-            WatchSync.style: selectedStyle.rawValue,
         ]
         if let data = try? JSONEncoder().encode(WatchWorkoutController.shared.recentHeartRates()) {
             message[WatchSync.heartRates] = data
@@ -94,15 +92,6 @@ final class WatchStore: NSObject, WCSessionDelegate {
         Task {
             try? await Task.sleep(for: .seconds(1.2))
             if toast == "\(grade) \(outcome.displayName)" { toast = nil }
-        }
-    }
-
-    func cycleStyle() {
-        let options = ClimbStyle.quickTap
-        if let index = options.firstIndex(of: selectedStyle) {
-            selectedStyle = options[(index + 1) % options.count]
-        } else {
-            selectedStyle = options[0]
         }
     }
 
@@ -144,7 +133,6 @@ final class WatchStore: NSObject, WCSessionDelegate {
         guard let snap = try? JSONDecoder().decode(WatchSnapshot.self, from: data) else { return }
         snapshot = snap
         if selectedGrade == nil { selectedGrade = snap.selectedGrade ?? snap.grades.first }
-        if let style = ClimbStyle(rawValue: snap.selectedStyle) { selectedStyle = style }
         if !snap.isActive {
             restPlan = nil
         } else if let rest = snap.rest, rest.id != skippedRestID {

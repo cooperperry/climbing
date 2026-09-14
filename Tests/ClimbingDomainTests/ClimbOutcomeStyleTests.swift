@@ -60,4 +60,11 @@ final class ClimbOutcomeStyleTests: XCTestCase {
         XCTAssertEqual(ClimbOutcome.topOut(attempts: 2), .send)
         XCTAssertEqual(ClimbOutcome.topOut(attempts: 9), .send)
     }
+
+    func testLogCopyIsPlainLanguage() {
+        XCTAssertEqual(ClimbOutcome.flash.logSubtitle, "First try")
+        XCTAssertEqual(ClimbOutcome.send.logSubtitle, "Topped it")
+        XCTAssertEqual(ClimbOutcome.attempt.displayName, "Didn't send")
+        XCTAssertEqual(ClimbOutcome.attempt.logSubtitle, "Fell / no top")
+    }
 }

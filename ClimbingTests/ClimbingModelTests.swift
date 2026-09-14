@@ -122,11 +122,12 @@ final class ClimbingModelTests: XCTestCase {
         XCTAssertEqual(fetched.effortTrace, trace)
     }
 
-    func testAngleDefaultsToVertical() throws {
+    func testStyleAndAngleDefaultToUntagged() throws {
         let context = try makeContext()
-        let log = ClimbLog(gradeLabel: "V3", outcome: .send, style: .crimp)
+        let log = ClimbLog(gradeLabel: "V3", outcome: .send)
         context.insert(log)
-        XCTAssertEqual(log.angle, .vertical)
+        XCTAssertNil(log.style)
+        XCTAssertNil(log.angle)
         XCTAssertEqual(log.wallAngle, .vertical)
     }
 
