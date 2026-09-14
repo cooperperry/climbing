@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One-screen Watch logger: glance BPM, crown for grade, two big send buttons.
+/// Session logger for a 40mm watch: one number, a grade, two big buttons.
 struct WatchSessionView: View {
     @State private var store = WatchStore.shared
     @State private var workout = WatchWorkoutController.shared
@@ -32,10 +32,17 @@ struct WatchSessionView: View {
     }
 
     private var activeView: some View {
-        VStack(spacing: 6) {
-            glanceHeader
+        VStack(spacing: 4) {
+            hero
+            Text(store.selectedGrade ?? "—")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
             logButtons
-            secondaryRow
+            Button("Fell") { store.log(outcome: .attempt) }
+                .font(.caption.bold())
+                .buttonStyle(.bordered)
+                .disabled(store.selectedGrade == nil)
         }
         .padding(.horizontal, 2)
         .focusable()
@@ -56,9 +63,13 @@ struct WatchSessionView: View {
         .onAppear(perform: syncCrown)
         .onChange(of: store.selectedGrade) { _, _ in syncCrown() }
         .sensoryFeedback(.success, trigger: store.logPulse)
-        .navigationTitle(store.toast ?? "Climb")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if store.snapshot.logs.first != nil {
+                    Button("Undo", action: store.undo)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("End", role: .destructive) { confirmEnd = true }
                     .foregroundStyle(.red)
@@ -68,72 +79,60 @@ struct WatchSessionView: View {
             Button("End Session", role: .destructive, action: store.endSession)
             Button("Keep Climbing", role: .cancel) {}
         }
-    }
-
-    private var glanceHeader: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text(bpmText)
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
-                    .foregroundStyle(.red)
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                Text("BPM")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.red.opacity(0.85))
-                Spacer(minLength: 4)
-                restOrTimer
-            }
-            HStack(alignment: .lastTextBaseline, spacing: 6) {
-                Text(store.selectedGrade ?? "—")
-                    .font(.title2.bold())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Text("Crown")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-        }
         .accessibilityHint("Turn the Digital Crown to change grade")
     }
 
-    @ViewBuilder
-    private var restOrTimer: some View {
+    /// One number only: rest countdown, else live BPM, else session time.
+    private var hero: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let bpm = workout.currentBPM ?? store.liveBPM
             if let plan = store.restPlan {
-                let phase = RecoveryMath.phase(
-                    plan: plan,
-                    now: timeline.date,
-                    currentBPM: workout.currentBPM ?? store.liveBPM
-                )
-                Button(action: { store.skipRest() }) {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text(phase.isFinished ? "READY" : "REST")
-                            .font(.caption2.bold())
-                        if case .resting(let remaining) = phase {
-                            Text(SessionClock.format(remaining))
-                                .font(.caption.bold())
-                                .monospacedDigit()
-                        }
-                    }
-                    .foregroundStyle(phase.isFinished ? .green : .stravaOrange)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(phase.isFinished ? "Ready to climb, tap to dismiss" : "Rest timer, tap to skip")
-                .onChange(of: phase.isFinished) { _, _ in
-                    store.evaluateRest(now: timeline.date)
-                }
-                .onAppear { store.evaluateRest(now: timeline.date) }
+                restHero(plan: plan, now: timeline.date, bpm: bpm)
+            } else if let bpm {
+                labeledNumber("\(bpm)", caption: "BPM", color: .red)
             } else {
                 let start = store.snapshot.sessionStart ?? timeline.date
-                Text(SessionClock.format(timeline.date.timeIntervalSince(start)))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                labeledNumber(
+                    SessionClock.format(timeline.date.timeIntervalSince(start)),
+                    caption: "TIME",
+                    color: .secondary
+                )
             }
         }
+    }
+
+    private func restHero(plan: RestPlan, now: Date, bpm: Int?) -> some View {
+        let phase = RecoveryMath.phase(plan: plan, now: now, currentBPM: bpm)
+        return Button(action: { store.skipRest() }) {
+            Group {
+                if phase.isFinished {
+                    labeledNumber("GO", caption: "READY", color: .green)
+                } else if case .resting(let remaining) = phase {
+                    labeledNumber(SessionClock.format(remaining), caption: "REST", color: .stravaOrange)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(phase.isFinished ? "Ready, tap to dismiss" : "Rest timer, tap to skip")
+        .onChange(of: phase.isFinished) { _, _ in
+            store.evaluateRest(now: now)
+        }
+        .onAppear { store.evaluateRest(now: now) }
+    }
+
+    private func labeledNumber(_ value: String, caption: String, color: Color) -> some View {
+        VStack(spacing: 0) {
+            Text(value)
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .foregroundStyle(color)
+                .monospacedDigit()
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+            Text(caption)
+                .font(.caption2.bold())
+                .foregroundStyle(color.opacity(0.85))
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var logButtons: some View {
@@ -141,62 +140,23 @@ struct WatchSessionView: View {
             Button {
                 store.log(outcome: .flash)
             } label: {
-                VStack(spacing: 1) {
-                    Image(systemName: ClimbOutcome.flash.symbolName)
-                    Text(ClimbOutcome.flash.displayName).font(.headline)
-                    Text(ClimbOutcome.flash.logSubtitle)
-                        .font(.caption2)
-                        .opacity(0.9)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("Flash")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .tint(.yellow)
-            .buttonStyle(.borderedProminent)
-            .disabled(store.selectedGrade == nil)
 
             Button {
                 store.log(outcome: .send)
             } label: {
-                VStack(spacing: 1) {
-                    Image(systemName: ClimbOutcome.send.symbolName)
-                    Text(ClimbOutcome.send.displayName).font(.headline)
-                    Text(ClimbOutcome.send.logSubtitle)
-                        .font(.caption2)
-                        .opacity(0.9)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("Send")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .tint(.green)
-            .buttonStyle(.borderedProminent)
-            .disabled(store.selectedGrade == nil)
         }
+        .font(.headline.bold())
+        .buttonStyle(.borderedProminent)
+        .disabled(store.selectedGrade == nil)
         .frame(maxHeight: .infinity)
-    }
-
-    private var secondaryRow: some View {
-        HStack {
-            Button("Didn't send") { store.log(outcome: .attempt) }
-                .font(.caption)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .disabled(store.selectedGrade == nil)
-            Spacer()
-            if store.snapshot.logs.first != nil {
-                Button("Undo", action: store.undo)
-                    .font(.caption)
-            }
-            Text("\(store.snapshot.climbs) · \(store.snapshot.score)")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        }
-    }
-
-    private var bpmText: String {
-        if let bpm = workout.currentBPM ?? store.liveBPM {
-            return "\(bpm)"
-        }
-        return "--"
     }
 
     private func syncCrown() {
