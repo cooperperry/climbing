@@ -76,15 +76,16 @@ final class ClimbingModelTests: XCTestCase {
 
     func testAttemptsAreFlooredAtOne() throws {
         let context = try makeContext()
-        let log = ClimbLog(gradeLabel: "V5", attempts: 0, outcome: .send, style: .pinch)
-        context.insert(log)
-        XCTAssertEqual(log.attempts, 1)
+        let zero = ClimbLog(gradeLabel: "V5", attempts: 0, outcome: .send, style: .pinch)
+        let negative = ClimbLog(gradeLabel: "V5", attempts: -4, outcome: .send, style: .pinch)
+        let normal = ClimbLog(gradeLabel: "V5", attempts: 7, outcome: .send, style: .pinch)
+        context.insert(zero)
+        context.insert(negative)
+        context.insert(normal)
 
-        log.setAttempts(-4)
-        XCTAssertEqual(log.attempts, 1)
-
-        log.setAttempts(7)
-        XCTAssertEqual(log.attempts, 7)
+        XCTAssertEqual(zero.attempts, 1)
+        XCTAssertEqual(negative.attempts, 1)
+        XCTAssertEqual(normal.attempts, 7)
     }
 
     func testOutcomeAndStyleEnumsPersist() throws {

@@ -15,8 +15,9 @@ final class ClimbLog {
     /// The grade label exactly as recorded, e.g. "V4" or "Blue".
     var gradeLabel: String
 
-    /// Number of attempts, always at least 1.
-    private(set) var attempts: Int
+    /// Number of attempts. Floored at 1 by the initializer; set through the app,
+    /// which never records a value below 1.
+    var attempts: Int
 
     var outcome: ClimbOutcome
 
@@ -40,10 +41,5 @@ final class ClimbLog {
         self.session = session
         self.gradeScale = gradeScale
         self.loggedAt = loggedAt
-    }
-
-    /// Updates the attempt count, enforcing a floor of 1.
-    func setAttempts(_ value: Int) {
-        attempts = max(1, value)
     }
 }
