@@ -140,4 +140,11 @@ final class EffortTraceTests: XCTestCase {
         XCTAssertFalse(trace.hasData)
         XCTAssertEqual(trace.character, .unknown)
     }
+
+    func testDemoTraceIsVisibleWithoutSensors() {
+        XCTAssertTrue(EffortTrace.demo.hasData)
+        XCTAssertTrue(EffortTrace.demo.hasMotion)
+        XCTAssertTrue(EffortTrace.demo.hasHeartRate)
+        XCTAssertEqual(EffortTrace.demo.character, .mixed)
+    }
 }

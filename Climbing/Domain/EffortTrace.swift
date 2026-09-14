@@ -112,6 +112,29 @@ public struct EffortTrace: Equatable, Sendable, Codable {
     public var hasData: Bool {
         !points.isEmpty && (hasMotion || hasHeartRate)
     }
+
+    /// Sample strip so Simulator (no Watch IMU / Health) can still show the recap.
+    public static var demo: EffortTrace {
+        let points: [EffortPoint] = (0..<40).map { i in
+            let climb = i % 8
+            let intensity = climb < 3 ? 0.18 : (climb < 6 ? 0.55 : 0.28)
+            let verticalness = climb < 4 ? 0.75 : 0.32
+            let bpm = 120 + climb * 4
+            return EffortPoint(
+                t: Double(i) * 0.5,
+                intensity: intensity,
+                verticalness: verticalness,
+                heartRate: bpm
+            )
+        }
+        return EffortTrace(
+            duration: 20,
+            points: points,
+            character: .mixed,
+            peakIntensity: 0.55,
+            averageHeartRate: 132
+        )
+    }
 }
 
 /// The attempt window captured when a send or flash is logged: from the later
