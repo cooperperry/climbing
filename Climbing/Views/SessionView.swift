@@ -89,9 +89,10 @@ struct SessionView: View {
                     .font(.system(size: 64, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText())
-                Text("\(session.logs.count) climbs • \(session.completionCount) sent")
+                Text("\(session.logs.count) climbs • \(session.completionCount) sent • \(session.score) pts")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
