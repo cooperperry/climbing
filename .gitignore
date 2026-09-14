@@ -3,7 +3,8 @@
 .swiftpm/
 Package.resolved
 
-# Xcode
+# Xcode (project is generated from project.yml via XcodeGen)
+*.xcodeproj
 DerivedData/
 *.xcuserstate
 xcuserdata/
