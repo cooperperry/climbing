@@ -26,12 +26,15 @@ final class ClimbLog {
 
     /// The wall angle of the climb.
     ///
-    /// The inline default is required for SwiftData lightweight migration: it
-    /// lets the store backfill this attribute on rows saved before `angle`
-    /// existed, instead of reading `nil` and crashing on the cast. The `@Model`
-    /// macro requires the default to be fully qualified (`ClimbAngle.vertical`),
-    /// not the `.vertical` shorthand.
-    var angle: ClimbAngle = ClimbAngle.vertical
+    /// Stored as optional so it migrates cleanly onto rows saved before `angle`
+    /// existed: SwiftData can't backfill a default for a custom enum during
+    /// lightweight migration, so a non-optional attribute reads `nil` on legacy
+    /// rows and crashes on the cast. Optional avoids that; use `wallAngle` for a
+    /// non-optional value that treats legacy `nil` as `.vertical`.
+    var angle: ClimbAngle?
+
+    /// The wall angle, defaulting legacy rows (stored `nil`) to vertical.
+    var wallAngle: ClimbAngle { angle ?? .vertical }
 
     var loggedAt: Date
 

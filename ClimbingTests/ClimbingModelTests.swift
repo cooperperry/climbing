@@ -109,6 +109,16 @@ final class ClimbingModelTests: XCTestCase {
         let log = ClimbLog(gradeLabel: "V3", outcome: .send, style: .crimp)
         context.insert(log)
         XCTAssertEqual(log.angle, .vertical)
+        XCTAssertEqual(log.wallAngle, .vertical)
+    }
+
+    func testWallAngleFallsBackForLegacyNil() throws {
+        let context = try makeContext()
+        let log = ClimbLog(gradeLabel: "V3", outcome: .send, style: .crimp)
+        context.insert(log)
+        // Simulate a row saved before `angle` existed.
+        log.angle = nil
+        XCTAssertEqual(log.wallAngle, .vertical)
     }
 
     func testGradeScaleFromTemplateStoresOrderedGrades() throws {

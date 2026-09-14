@@ -277,7 +277,7 @@ struct SessionView: View {
                         Image(systemName: log.outcome.symbolName)
                             .foregroundStyle(color(for: log.outcome))
                         Text(log.gradeLabel).bold()
-                        Text("\(log.style.displayName) • \(log.angle.displayName)")
+                        Text("\(log.style.displayName) • \(log.wallAngle.displayName)")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Spacer()
