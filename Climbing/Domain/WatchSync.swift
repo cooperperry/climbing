@@ -18,6 +18,8 @@ public enum WatchSync {
     public static let to = "to"
     public static let payload = "payload"
     public static let value = "value"
+    public static let rest = "rest"
+    public static let skipRest = "skipRest"
 }
 
 /// One climb row mirrored onto the Watch.
@@ -71,6 +73,8 @@ public struct WatchSnapshot: Equatable, Sendable, Codable {
     public var hardestSend: String?
     public var levelNumber: Int
     public var levelTitle: String
+    public var rest: RestPlan?
+    public var styleHeadline: String?
 
     public init(
         isActive: Bool = false,
@@ -90,7 +94,9 @@ public struct WatchSnapshot: Equatable, Sendable, Codable {
         lifetimePoints: Int = 0,
         hardestSend: String? = nil,
         levelNumber: Int = 1,
-        levelTitle: String = "Beginner"
+        levelTitle: String = "Beginner",
+        rest: RestPlan? = nil,
+        styleHeadline: String? = nil
     ) {
         self.isActive = isActive
         self.startTime = startTime
@@ -110,6 +116,8 @@ public struct WatchSnapshot: Equatable, Sendable, Codable {
         self.hardestSend = hardestSend
         self.levelNumber = levelNumber
         self.levelTitle = levelTitle
+        self.rest = rest
+        self.styleHeadline = styleHeadline
     }
 
     public static let empty = WatchSnapshot()

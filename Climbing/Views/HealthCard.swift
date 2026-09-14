@@ -14,32 +14,36 @@ struct HealthCard: View {
                 Label("Apple Watch", systemImage: "applewatch")
                     .font(.headline)
                 Spacer()
-                if status != .authorized && status != .unavailable {
+                if liveBPM == nil && status != .authorized && status != .unavailable {
                     Button("Connect", action: onConnect)
                         .font(.subheadline.bold())
                 }
             }
 
-            switch status {
-            case .authorized where liveBPM != nil || summary.hasData:
+            if liveBPM != nil || (status == .authorized && summary.hasData) {
                 HStack(spacing: 20) {
                     if let liveBPM {
                         metric("\(liveBPM)", unit: "bpm", label: "Now",
                                systemImage: "heart.fill", color: .red)
                     }
-                    metric(summary.caloriesText, unit: "kcal", label: "Active",
-                           systemImage: "flame.fill", color: .stravaOrange)
-                    if let avg = summary.averageHeartRate {
-                        metric("\(avg)", unit: "bpm", label: "Avg HR",
-                               systemImage: "heart.fill", color: .red)
+                    if status == .authorized && summary.hasData {
+                        metric(summary.caloriesText, unit: "kcal", label: "Active",
+                               systemImage: "flame.fill", color: .stravaOrange)
+                        if let avg = summary.averageHeartRate {
+                            metric("\(avg)", unit: "bpm", label: "Avg HR",
+                                   systemImage: "heart.fill", color: .red)
+                        }
                     }
                 }
-            case .authorized:
-                hint("Start a session with your Apple Watch to capture calories, heart rate, and a send trace after you send or flash.")
-            case .unavailable:
-                hint("Health data isn't available on this device.")
-            default:
-                hint("Connect Apple Health to track calories and heart rate during your session.")
+            } else {
+                switch status {
+                case .authorized:
+                    hint("Start a session with your Apple Watch to capture calories and heart rate.")
+                case .unavailable:
+                    hint("Health data isn't available on this device.")
+                default:
+                    hint("Connect Apple Health to track calories and heart rate during your session.")
+                }
             }
         }
         .padding()
