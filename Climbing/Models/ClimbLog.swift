@@ -28,8 +28,10 @@ final class ClimbLog {
     ///
     /// The inline default is required for SwiftData lightweight migration: it
     /// lets the store backfill this attribute on rows saved before `angle`
-    /// existed, instead of reading `nil` and crashing on the cast.
-    var angle: ClimbAngle = .vertical
+    /// existed, instead of reading `nil` and crashing on the cast. The `@Model`
+    /// macro requires the default to be fully qualified (`ClimbAngle.vertical`),
+    /// not the `.vertical` shorthand.
+    var angle: ClimbAngle = ClimbAngle.vertical
 
     var loggedAt: Date
 
