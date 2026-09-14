@@ -21,7 +21,11 @@ final class ClimbLog {
 
     var outcome: ClimbOutcome
 
+    /// The movement/hold character of the climb.
     var style: ClimbStyle
+
+    /// The wall angle of the climb.
+    var angle: ClimbAngle
 
     var loggedAt: Date
 
@@ -30,6 +34,7 @@ final class ClimbLog {
         attempts: Int = 1,
         outcome: ClimbOutcome,
         style: ClimbStyle,
+        angle: ClimbAngle = .vertical,
         session: ClimbingSession? = nil,
         gradeScale: CustomGradeScale? = nil,
         loggedAt: Date = .now
@@ -38,6 +43,7 @@ final class ClimbLog {
         self.attempts = max(1, attempts)
         self.outcome = outcome
         self.style = style
+        self.angle = angle
         self.session = session
         self.gradeScale = gradeScale
         self.loggedAt = loggedAt

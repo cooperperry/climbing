@@ -62,8 +62,8 @@ final class ClimbingModelTests: XCTestCase {
         let context = try makeContext()
         let session = ClimbingSession()
         context.insert(session)
-        context.insert(ClimbLog(gradeLabel: "V4", outcome: .send, style: .overhang, session: session))
-        context.insert(ClimbLog(gradeLabel: "V2", outcome: .flash, style: .slab, session: session))
+        context.insert(ClimbLog(gradeLabel: "V4", outcome: .send, style: .compression, angle: .overhang, session: session))
+        context.insert(ClimbLog(gradeLabel: "V2", outcome: .flash, style: .technical, angle: .slab, session: session))
         try context.save()
 
         XCTAssertEqual(try context.fetch(FetchDescriptor<ClimbLog>()).count, 2)
@@ -88,17 +88,27 @@ final class ClimbingModelTests: XCTestCase {
         XCTAssertEqual(normal.attempts, 7)
     }
 
-    func testOutcomeAndStyleEnumsPersist() throws {
+    func testOutcomeStyleAngleEnumsPersist() throws {
         let context = try makeContext()
-        let log = ClimbLog(gradeLabel: "V6", attempts: 3, outcome: .project, style: .dyno)
+        let log = ClimbLog(
+            gradeLabel: "V6", attempts: 3, outcome: .project, style: .dyno, angle: .roof
+        )
         context.insert(log)
         try context.save()
 
         let fetched = try XCTUnwrap(try context.fetch(FetchDescriptor<ClimbLog>()).first)
         XCTAssertEqual(fetched.outcome, .project)
         XCTAssertEqual(fetched.style, .dyno)
+        XCTAssertEqual(fetched.angle, .roof)
         XCTAssertEqual(fetched.gradeLabel, "V6")
         XCTAssertEqual(fetched.attempts, 3)
+    }
+
+    func testAngleDefaultsToVertical() throws {
+        let context = try makeContext()
+        let log = ClimbLog(gradeLabel: "V3", outcome: .send, style: .crimp)
+        context.insert(log)
+        XCTAssertEqual(log.angle, .vertical)
     }
 
     func testGradeScaleFromTemplateStoresOrderedGrades() throws {
@@ -120,7 +130,7 @@ final class ClimbingModelTests: XCTestCase {
         let scale = CustomGradeScale(template: .gymColorCircuit(), isDefault: true)
         context.insert(scale)
         let log = ClimbLog(
-            gradeLabel: "Blue", outcome: .send, style: .jug, gradeScale: scale
+            gradeLabel: "Blue", outcome: .send, style: .crimp, gradeScale: scale
         )
         context.insert(log)
         try context.save()

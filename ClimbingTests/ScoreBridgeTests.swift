@@ -39,8 +39,8 @@ final class ScoreBridgeTests: XCTestCase {
         let context = try makeContext()
         let scale = CustomGradeScale(template: .standardVScale(), isDefault: true)
         context.insert(scale)
-        let flash = ClimbLog(gradeLabel: "V4", outcome: .flash, style: .jug, gradeScale: scale)
-        let send = ClimbLog(gradeLabel: "V4", outcome: .send, style: .jug, gradeScale: scale)
+        let flash = ClimbLog(gradeLabel: "V4", outcome: .flash, style: .sloper, gradeScale: scale)
+        let send = ClimbLog(gradeLabel: "V4", outcome: .send, style: .sloper, gradeScale: scale)
         context.insert(flash)
         context.insert(send)
 
