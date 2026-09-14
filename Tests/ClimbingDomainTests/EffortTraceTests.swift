@@ -41,29 +41,15 @@ final class EffortTraceTests: XCTestCase {
         XCTAssertEqual(EffortMath.character([]), .unknown)
     }
 
-    func testDownsampleKeepsOneFramePerInterval() {
-        let frames = (0..<10).map { i in
-            MotionFrame(
-                timestamp: Double(i) * 0.1,
-                userX: Double(i), userY: 0, userZ: 0,
-                gravityX: 0, gravityY: 0, gravityZ: 1
-            )
+    func testDownsampleKeepsOneHeartRatePerInterval() {
+        let samples = (0..<10).map { i in
+            HeartRateSample(timestamp: Double(i) * 0.5, bpm: 120)
         }
-        let sampled = EffortMath.downsample(frames, interval: 0.2)
+        let sampled = EffortMath.downsample(samples, interval: 1)
         XCTAssertEqual(sampled.count, 5)
-        zip(sampled.map(\.timestamp), [0.0, 0.2, 0.4, 0.6, 0.8]).forEach { actual, expected in
+        zip(sampled.map(\.timestamp), [0.0, 1.0, 2.0, 3.0, 4.0]).forEach { actual, expected in
             XCTAssertEqual(actual, expected, accuracy: 0.0001)
         }
-    }
-
-    func testNearestHeartRateRespectsMaxGap() {
-        let samples = [
-            HeartRateSample(timestamp: 10, bpm: 120),
-            HeartRateSample(timestamp: 20, bpm: 150),
-        ]
-        XCTAssertEqual(EffortMath.nearestHeartRate(samples, at: 21, maxGap: 8), 150)
-        XCTAssertNil(EffortMath.nearestHeartRate(samples, at: 40, maxGap: 8))
-        XCTAssertNil(EffortMath.nearestHeartRate([], at: 10))
     }
 
     func testWindowCapsAt45SecondsAndNotBeforeSession() {
@@ -95,56 +81,39 @@ final class EffortTraceTests: XCTestCase {
         XCTAssertEqual(bounds.start.timeIntervalSince1970, 155)
     }
 
-    func testTraceOverlaysHeartRateOnMotion() {
-        let start = Date(timeIntervalSince1970: 0)
-        let end = Date(timeIntervalSince1970: 2)
-        let motion = [
-            MotionFrame(
-                timestamp: 0.4, userX: 0, userY: 0, userZ: 0.5,
-                gravityX: 0, gravityY: 0, gravityZ: 1
-            ),
-            MotionFrame(
-                timestamp: 1.2, userX: 0.4, userY: 0, userZ: 0,
-                gravityX: 0, gravityY: 0, gravityZ: 1
-            ),
-        ]
-        let hrs = [HeartRateSample(timestamp: 1.0, bpm: 142.4)]
-        let trace = EffortMath.trace(motion: motion, heartRates: hrs, start: start, end: end)
-
-        XCTAssertTrue(trace.hasMotion)
-        XCTAssertTrue(trace.hasHeartRate)
-        XCTAssertEqual(trace.duration, 2)
-        XCTAssertEqual(trace.character, .mixed)
-        XCTAssertEqual(trace.averageHeartRate, 142)
-        XCTAssertEqual(trace.points.count, 2)
-        XCTAssertEqual(trace.points[0].heartRate, 142)
-    }
-
-    func testTraceIsHeartRateOnlyWhenMotionIsMissing() {
+    func testTraceIsHeartRateOverTime() {
         let start = Date(timeIntervalSince1970: 0)
         let end = Date(timeIntervalSince1970: 10)
         let hrs = [
             HeartRateSample(timestamp: 1, bpm: 110),
             HeartRateSample(timestamp: 5, bpm: 130),
+            HeartRateSample(timestamp: 9, bpm: 148),
         ]
-        let trace = EffortMath.trace(motion: [], heartRates: hrs, start: start, end: end)
+        let motion = [
+            MotionFrame(
+                timestamp: 1, userX: 0, userY: 0, userZ: 1,
+                gravityX: 0, gravityY: 0, gravityZ: 1
+            )
+        ]
+        let trace = EffortMath.trace(motion: motion, heartRates: hrs, start: start, end: end)
         XCTAssertFalse(trace.hasMotion)
         XCTAssertTrue(trace.hasHeartRate)
         XCTAssertEqual(trace.character, .unknown)
-        XCTAssertEqual(trace.points.map(\.heartRate), [110, 130])
+        XCTAssertEqual(trace.points.map(\.heartRate), [110, 130, 148])
+        XCTAssertEqual(trace.averageHeartRate, 129)
+        XCTAssertEqual(trace.peakHeartRate, 148)
     }
 
     func testEmptyTraceHasNoData() {
         let start = Date(timeIntervalSince1970: 0)
-        let trace = EffortMath.trace(motion: [], heartRates: [], start: start, end: start)
+        let trace = EffortMath.trace(heartRates: [], start: start, end: start)
         XCTAssertFalse(trace.hasData)
         XCTAssertEqual(trace.character, .unknown)
     }
 
     func testDemoTraceIsVisibleWithoutSensors() {
         XCTAssertTrue(EffortTrace.demo.hasData)
-        XCTAssertTrue(EffortTrace.demo.hasMotion)
         XCTAssertTrue(EffortTrace.demo.hasHeartRate)
-        XCTAssertEqual(EffortTrace.demo.character, .mixed)
+        XCTAssertEqual(EffortTrace.demo.peakHeartRate, 153)
     }
 }

@@ -18,6 +18,9 @@ struct ClimbingApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onAppear {
+                    PhoneWatchBridge.shared.attach(context: container.mainContext)
+                }
         }
         .modelContainer(container)
     }
