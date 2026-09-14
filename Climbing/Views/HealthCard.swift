@@ -34,7 +34,7 @@ struct HealthCard: View {
                     }
                 }
             case .authorized:
-                hint("Start a workout on your Apple Watch to see calories and heart rate here.")
+                hint("Start a session with your Apple Watch to capture calories, heart rate, and a send trace after you send or flash.")
             case .unavailable:
                 hint("Health data isn't available on this device.")
             default:

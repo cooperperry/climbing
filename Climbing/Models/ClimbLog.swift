@@ -38,6 +38,25 @@ final class ClimbLog {
 
     var loggedAt: Date
 
+    /// Encoded `EffortTrace` for a send/flash (Watch motion + HR overlay).
+    /// Optional so logs saved before send traces existed migrate as `nil`.
+    var effortTraceData: Data?
+
+    /// Decoded send trace, or `nil` when none was captured.
+    var effortTrace: EffortTrace? {
+        get {
+            guard let effortTraceData else { return nil }
+            return try? JSONDecoder().decode(EffortTrace.self, from: effortTraceData)
+        }
+        set {
+            if let newValue {
+                effortTraceData = try? JSONEncoder().encode(newValue)
+            } else {
+                effortTraceData = nil
+            }
+        }
+    }
+
     init(
         gradeLabel: String,
         attempts: Int = 1,

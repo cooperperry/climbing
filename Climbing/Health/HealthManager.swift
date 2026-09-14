@@ -51,10 +51,31 @@ final class HealthManager {
         guard HKHealthStore.isHealthDataAvailable(), status == .authorized else { return }
         async let calories = activeEnergy(start: start, end: end)
         async let heartRates = heartRateSamples(start: start, end: end)
-        summary = await HealthMath.summary(
-            activeCalories: calories,
-            heartRates: heartRates
+        let burned = await calories
+        let samples = await heartRates
+        summary = HealthMath.summary(
+            activeCalories: burned,
+            heartRates: samples.map(\.bpm)
         )
+    }
+
+    /// Timestamped heart-rate samples for overlaying a send trace.
+    func heartRateTimeline(from start: Date, to end: Date) async -> [HeartRateSample] {
+        await heartRateSamples(start: start, end: end)
+    }
+
+    /// Launches the Watch app into a climbing workout so it can record wrist
+    /// motion. No-ops when a Watch isn't paired or the companion isn't installed.
+    func startWatchWorkout() async {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        let config = HKWorkoutConfiguration()
+        config.activityType = .climbing
+        config.locationType = .indoor
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            store.startWatchApp(with: config) { _, _ in
+                continuation.resume()
+            }
+        }
     }
 
     private func activeEnergy(start: Date, end: Date) async -> Double {
@@ -75,7 +96,7 @@ final class HealthManager {
         }
     }
 
-    private func heartRateSamples(start: Date, end: Date) async -> [Double] {
+    private func heartRateSamples(start: Date, end: Date) async -> [HeartRateSample] {
         guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
             return []
         }
@@ -86,10 +107,14 @@ final class HealthManager {
                 sampleType: type,
                 predicate: predicate,
                 limit: HKObjectQueryNoLimit,
-                sortDescriptors: nil
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
             ) { _, samples, _ in
-                let values = (samples as? [HKQuantitySample])?
-                    .map { $0.quantity.doubleValue(for: unit) } ?? []
+                let values = (samples as? [HKQuantitySample])?.map {
+                    HeartRateSample(
+                        timestamp: $0.startDate.timeIntervalSince1970,
+                        bpm: $0.quantity.doubleValue(for: unit)
+                    )
+                } ?? []
                 continuation.resume(returning: values)
             }
             store.execute(query)

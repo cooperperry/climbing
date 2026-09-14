@@ -21,6 +21,8 @@ targets:
       - path: Climbing
     dependencies:
       - sdk: HealthKit.framework
+      - target: ClimbingWatch
+        embed: true
     entitlements:
       path: Climbing/Climbing.entitlements
       properties:
@@ -32,7 +34,31 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
-        INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads active energy and heart rate from Apple Health to show your effort during a session."
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads active energy and heart rate from Apple Health to show your effort during a session, and uses wrist motion from Apple Watch to build a send trace after you send or flash."
+
+  ClimbingWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - ClimbingWatch
+      - Climbing/Domain
+    entitlements:
+      path: ClimbingWatch/ClimbingWatch.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+    dependencies:
+      - sdk: HealthKit.framework
+      - sdk: CoreMotion.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbing.watchkitapp
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "4"
+        INFOPLIST_KEY_WKApplication: YES
+        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: com.cooperperry.climbing
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads heart rate during a session to overlay on your send traces."
+        INFOPLIST_KEY_NSHealthUpdateUsageDescription: "Climbing starts a Watch workout so wrist motion can be recorded for send traces."
 
   ClimbingTests:
     type: bundle.unit-test
@@ -51,6 +77,7 @@ schemes:
     build:
       targets:
         Climbing: all
+        ClimbingWatch: all
         ClimbingTests: [test]
     run:
       config: Debug
