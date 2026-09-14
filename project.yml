@@ -19,6 +19,8 @@ targets:
     platform: iOS
     sources:
       - path: Climbing
+    dependencies:
+      - sdk: HealthKit.framework
     entitlements:
       path: Climbing/Climbing.entitlements
       properties:

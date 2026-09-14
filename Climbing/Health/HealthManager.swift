@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import Observation
 
 /// Reads Apple Watch metrics (active energy + heart rate) from HealthKit for a
 /// session window. Pure aggregation/formatting lives in `HealthMath` /
