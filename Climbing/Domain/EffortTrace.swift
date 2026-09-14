@@ -113,27 +113,29 @@ public struct EffortTrace: Equatable, Sendable, Codable {
         !points.isEmpty && (hasMotion || hasHeartRate)
     }
 
-    /// Sample strip so Simulator (no Watch IMU / Health) can still show the recap.
+    /// Sample BPM strip so Simulator (no Health) can still show the recap.
     public static var demo: EffortTrace {
         let points: [EffortPoint] = (0..<40).map { i in
             let climb = i % 8
-            let intensity = climb < 3 ? 0.18 : (climb < 6 ? 0.55 : 0.28)
-            let verticalness = climb < 4 ? 0.75 : 0.32
-            let bpm = 120 + climb * 4
+            let bpm = 118 + climb * 5
             return EffortPoint(
                 t: Double(i) * 0.5,
-                intensity: intensity,
-                verticalness: verticalness,
+                intensity: 0,
+                verticalness: 0.5,
                 heartRate: bpm
             )
         }
         return EffortTrace(
             duration: 20,
             points: points,
-            character: .mixed,
-            peakIntensity: 0.55,
+            character: .unknown,
+            peakIntensity: 0,
             averageHeartRate: 132
         )
+    }
+
+    public var peakHeartRate: Int? {
+        points.compactMap(\.heartRate).max()
     }
 }
 
@@ -157,18 +159,7 @@ public enum EffortWindow {
     }
 }
 
-/// Keys for WatchConnectivity messages. Shared so the Watch and iPhone stay
-/// in lockstep without importing WatchConnectivity in Domain.
-public enum WatchSync {
-    public static let kind = "kind"
-    public static let start = "start"
-    public static let stop = "stop"
-    public static let frames = "frames"
-    public static let from = "from"
-    public static let to = "to"
-}
-
-/// Pure helpers for turning raw Watch IMU + HR samples into an `EffortTrace`.
+/// Pure helpers for turning heart-rate samples into an `EffortTrace`.
 public enum EffortMath {
     public static func intensity(userX: Double, userY: Double, userZ: Double) -> Double {
         (userX * userX + userY * userY + userZ * userZ).squareRoot()
@@ -197,41 +188,27 @@ public enum EffortMath {
 
     /// Keeps the first sample in each `interval` bucket so a 45s window stays
     /// small enough to send over WatchConnectivity.
-    public static func downsample(_ frames: [MotionFrame], interval: TimeInterval = 0.2) -> [MotionFrame] {
-        guard interval > 0 else { return frames }
-        let sorted = frames.sorted { $0.timestamp < $1.timestamp }
-        guard let first = sorted.first else { return frames }
-        var result: [MotionFrame] = []
+    public static func downsample(
+        _ samples: [HeartRateSample],
+        interval: TimeInterval = 1
+    ) -> [HeartRateSample] {
+        guard interval > 0 else { return samples }
+        let sorted = samples.sorted { $0.timestamp < $1.timestamp }
+        guard let first = sorted.first else { return samples }
+        var result: [HeartRateSample] = []
         var next = first.timestamp
-        for frame in sorted {
-            if frame.timestamp + 0.0001 >= next {
-                result.append(frame)
-                next = frame.timestamp + interval
+        for sample in sorted {
+            if sample.timestamp + 0.0001 >= next {
+                result.append(sample)
+                next = sample.timestamp + interval
             }
         }
         return result
     }
 
-    public static func nearestHeartRate(
-        _ samples: [HeartRateSample],
-        at timestamp: TimeInterval,
-        maxGap: TimeInterval = 8
-    ) -> Int? {
-        var best: HeartRateSample?
-        var bestDist = TimeInterval.greatestFiniteMagnitude
-        for sample in samples {
-            let dist = abs(sample.timestamp - timestamp)
-            if dist < bestDist {
-                bestDist = dist
-                best = sample
-            }
-        }
-        guard let best, bestDist <= maxGap else { return nil }
-        return Int(best.bpm.rounded())
-    }
-
+    /// Heart-rate trace for a send/flash window. Motion is ignored — the chart
+    /// is BPM as the climb progresses.
     public static func trace(
-        motion: [MotionFrame],
         heartRates: [HeartRateSample],
         start: Date,
         end: Date
@@ -239,41 +216,18 @@ public enum EffortMath {
         let duration = max(0, end.timeIntervalSince(start))
         let startTs = start.timeIntervalSince1970
         let endTs = end.timeIntervalSince1970
-        let hr = heartRates
-            .filter { $0.timestamp >= startTs - 8 && $0.timestamp <= endTs + 8 }
-            .sorted { $0.timestamp < $1.timestamp }
-
         let sampled = downsample(
-            motion.filter { $0.timestamp >= startTs && $0.timestamp <= endTs }
+            heartRates.filter { $0.timestamp >= startTs - 2 && $0.timestamp <= endTs + 2 }
         )
-
-        let points: [EffortPoint]
-        if sampled.isEmpty {
-            points = hr.filter { $0.timestamp >= startTs && $0.timestamp <= endTs }.map { sample in
-                EffortPoint(
-                    t: max(0, sample.timestamp - startTs),
-                    intensity: 0,
-                    verticalness: 0.5,
-                    heartRate: Int(sample.bpm.rounded())
-                )
-            }
-        } else {
-            points = sampled.map { frame in
-                EffortPoint(
-                    t: max(0, frame.timestamp - startTs),
-                    intensity: intensity(userX: frame.userX, userY: frame.userY, userZ: frame.userZ),
-                    verticalness: verticalness(
-                        userX: frame.userX, userY: frame.userY, userZ: frame.userZ,
-                        gravityX: frame.gravityX, gravityY: frame.gravityY, gravityZ: frame.gravityZ
-                    ),
-                    heartRate: nearestHeartRate(hr, at: frame.timestamp)
-                )
-            }
+        let points = sampled.map { sample in
+            EffortPoint(
+                t: max(0, sample.timestamp - startTs),
+                intensity: 0,
+                verticalness: 0.5,
+                heartRate: Int(sample.bpm.rounded())
+            )
         }
-
-        let moving = points.filter { $0.intensity >= EffortTrace.motionFloor }.map(\.verticalness)
         let rates = points.compactMap(\.heartRate)
-        let peak = points.map(\.intensity).max() ?? 0
         let avgHR = rates.isEmpty
             ? nil
             : Int((Double(rates.reduce(0, +)) / Double(rates.count)).rounded())
@@ -281,9 +235,20 @@ public enum EffortMath {
         return EffortTrace(
             duration: duration,
             points: points,
-            character: character(moving),
-            peakIntensity: peak,
+            character: .unknown,
+            peakIntensity: 0,
             averageHeartRate: avgHR
         )
+    }
+
+    /// Back-compat wrapper: motion is no longer used in the recap chart.
+    public static func trace(
+        motion: [MotionFrame],
+        heartRates: [HeartRateSample],
+        start: Date,
+        end: Date
+    ) -> EffortTrace {
+        _ = motion
+        return trace(heartRates: heartRates, start: start, end: end)
     }
 }

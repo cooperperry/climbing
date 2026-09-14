@@ -5,6 +5,7 @@ import SwiftUI
 struct HealthCard: View {
     let summary: HealthSummary
     let status: HealthManager.Status
+    var liveBPM: Int? = nil
     let onConnect: () -> Void
 
     var body: some View {
@@ -20,17 +21,17 @@ struct HealthCard: View {
             }
 
             switch status {
-            case .authorized where summary.hasData:
+            case .authorized where liveBPM != nil || summary.hasData:
                 HStack(spacing: 20) {
+                    if let liveBPM {
+                        metric("\(liveBPM)", unit: "bpm", label: "Now",
+                               systemImage: "heart.fill", color: .red)
+                    }
                     metric(summary.caloriesText, unit: "kcal", label: "Active",
                            systemImage: "flame.fill", color: .stravaOrange)
                     if let avg = summary.averageHeartRate {
                         metric("\(avg)", unit: "bpm", label: "Avg HR",
                                systemImage: "heart.fill", color: .red)
-                    }
-                    if let peak = summary.maxHeartRate {
-                        metric("\(peak)", unit: "bpm", label: "Max HR",
-                               systemImage: "bolt.heart.fill", color: .red)
                     }
                 }
             case .authorized:

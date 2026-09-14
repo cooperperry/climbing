@@ -25,16 +25,26 @@ struct SessionView: View {
     @State private var lastLog: ClimbLog?
     @State private var sendTrigger = 0
     @State private var floatingGain: Int?
-    @State private var health = HealthManager()
     @State private var summarySession: ClimbingSession?
     @State private var summaryRecords: [PersonalRecord] = []
     @State private var liveTrace: EffortTrace?
-    @State private var liveTraceTitle = "Send trace"
+    @State private var liveTraceTitle = "Heart rate"
+    @State private var bridge = PhoneWatchBridge.shared
+
+    private var health: HealthManager { bridge.health }
+    private var liveBPM: Int? { bridge.liveBPM }
 
     private var activeSession: ClimbingSession? { activeSessions.first }
 
     private var defaultScale: CustomGradeScale? {
         scales.first { $0.isDefault } ?? scales.first
+    }
+
+    private var strip: (title: String, trace: EffortTrace)? {
+        if let liveTrace { return (liveTraceTitle, liveTrace) }
+        guard let log = activeSession?.logs.filter(\.outcome.isCompletion).max(by: { $0.loggedAt < $1.loggedAt }),
+              let trace = log.effortTrace else { return nil }
+        return ("\(log.gradeLabel) \(log.outcome.displayName)", trace)
     }
 
     var body: some View {
@@ -68,7 +78,21 @@ struct SessionView: View {
         .sensoryFeedback(.success, trigger: sendTrigger)
         .onAppear {
             prepareSession()
+            PhoneWatchBridge.shared.attach(context: context)
+            PhoneWatchBridge.shared.selectedGrade = selectedGrade
+            PhoneWatchBridge.shared.selectedStyle = selectedStyle
             if activeSession != nil { beginWatchCapture() }
+        }
+        .onChange(of: selectedGrade) { _, grade in
+            PhoneWatchBridge.shared.selectedGrade = grade
+            PhoneWatchBridge.shared.publishSnapshot()
+        }
+        .onChange(of: selectedStyle) { _, style in
+            PhoneWatchBridge.shared.selectedStyle = style
+            PhoneWatchBridge.shared.publishSnapshot()
+        }
+        .onChange(of: activeSessions.count) { _, _ in
+            PhoneWatchBridge.shared.publishSnapshot()
         }
     }
 
@@ -93,7 +117,11 @@ struct SessionView: View {
         ScrollView {
             VStack(spacing: 20) {
                 timerHeader(session)
-                HealthCard(summary: health.summary, status: health.status) {
+                HealthCard(
+                    summary: health.summary,
+                    status: health.status,
+                    liveBPM: liveBPM
+                ) {
                     Task {
                         await health.requestAuthorization()
                         await health.refresh(from: session.startTime, to: .now)
@@ -101,8 +129,8 @@ struct SessionView: View {
                     }
                 }
                 logCard(session)
-                if let liveTrace {
-                    EffortStripView(trace: liveTrace, title: liveTraceTitle)
+                if let strip {
+                    EffortStripView(trace: strip.trace, title: strip.title)
                 }
                 recentLogs(session)
             }
@@ -128,6 +156,13 @@ struct SessionView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .contentTransition(.numericText())
+                if let liveBPM {
+                    Label("\(liveBPM) bpm", systemImage: "heart.fill")
+                        .font(.headline)
+                        .foregroundStyle(.red)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
@@ -317,7 +352,7 @@ struct SessionView: View {
         lastLog = nil
         liveTrace = nil
         summarySession = session
-        WatchMotionClient.shared.stopRecording()
+        PhoneWatchBridge.shared.stopWatchSide()
     }
 
     private func log(outcome: ClimbOutcome, attempts: Int, in session: ClimbingSession) {
@@ -336,6 +371,7 @@ struct SessionView: View {
         lastLog = entry
         sendTrigger += 1
         showGain(entry.points)
+        PhoneWatchBridge.shared.publishSnapshot()
         if outcome.isCompletion {
             liveTraceTitle = "\(grade) \(outcome.displayName)"
             liveTrace = EffortTrace()
@@ -355,11 +391,12 @@ struct SessionView: View {
             sessionStart: session.startTime,
             previousLogAt: previousLogAt
         )
-        async let motion = WatchMotionClient.shared.frames(from: bounds.start, to: bounds.end)
-        async let hrs = health.heartRateTimeline(from: bounds.start, to: bounds.end)
+        async let watchHR = PhoneWatchBridge.shared.heartRates(from: bounds.start, to: bounds.end)
+        async let healthHR = health.heartRateTimeline(from: bounds.start, to: bounds.end)
+        let watchSamples = await watchHR
+        let healthSamples = await healthHR
         var trace = EffortMath.trace(
-            motion: await motion,
-            heartRates: await hrs,
+            heartRates: watchSamples.isEmpty ? healthSamples : watchSamples,
             start: bounds.start,
             end: bounds.end
         )
@@ -373,12 +410,12 @@ struct SessionView: View {
         if trace.hasData {
             entry.effortTrace = trace
             try? context.save()
+            PhoneWatchBridge.shared.publishSnapshot()
         }
     }
 
     private func beginWatchCapture() {
-        WatchMotionClient.shared.startRecording()
-        Task { await health.startWatchWorkout() }
+        PhoneWatchBridge.shared.startWatchSide()
     }
 
     private func showGain(_ points: Int) {

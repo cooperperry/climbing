@@ -49,7 +49,6 @@ targets:
         com.apple.developer.healthkit: true
     dependencies:
       - sdk: HealthKit.framework
-      - sdk: CoreMotion.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbing.watchkitapp
