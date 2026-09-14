@@ -168,12 +168,12 @@ struct StatsView: View {
 
     @ViewBuilder
     private var recentSessionsCard: some View {
-        let recent = sessions.filter { !$0.isActive }.prefix(5)
+        let recent: [ClimbingSession] = Array(sessions.filter { !$0.isActive }.prefix(5))
         if !recent.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Recent Sessions")
                     .font(.headline)
-                ForEach(Array(recent)) { session in
+                ForEach(recent) { session in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(session.startTime, format: .dateTime.weekday().month().day())
