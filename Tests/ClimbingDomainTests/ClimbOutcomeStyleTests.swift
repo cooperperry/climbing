@@ -39,4 +39,25 @@ final class ClimbOutcomeStyleTests: XCTestCase {
             XCTAssertFalse(style.symbolName.isEmpty)
         }
     }
+
+    func testStylesNoLongerIncludeHoldOnlyOrAngleTerms() {
+        // Jug is a hold, not a style; slab/overhang/etc. are angles, not styles.
+        let raw = Set(ClimbStyle.allCases.map(\.rawValue))
+        for absent in ["jug", "slab", "vertical", "overhang", "roof"] {
+            XCTAssertFalse(raw.contains(absent), "\(absent) should not be a ClimbStyle")
+        }
+    }
+
+    func testEveryOutcomeHasAnExplanation() {
+        for outcome in ClimbOutcome.allCases {
+            XCTAssertFalse(outcome.explanation.isEmpty)
+        }
+    }
+
+    func testTopOutDerivesFlashOnFirstGoOtherwiseSend() {
+        XCTAssertEqual(ClimbOutcome.topOut(attempts: 1), .flash)
+        XCTAssertEqual(ClimbOutcome.topOut(attempts: 0), .flash)
+        XCTAssertEqual(ClimbOutcome.topOut(attempts: 2), .send)
+        XCTAssertEqual(ClimbOutcome.topOut(attempts: 9), .send)
+    }
 }

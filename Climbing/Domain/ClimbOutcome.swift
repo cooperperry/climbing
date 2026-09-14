@@ -53,4 +53,22 @@ public enum ClimbOutcome: String, CaseIterable, Codable, Identifiable, Sendable 
         case .attempt: return 3
         }
     }
+
+    /// A plain-language definition, surfaced in the in-app info sheet and tooltips
+    /// so users never have to guess what a term means.
+    public var explanation: String {
+        switch self {
+        case .flash: return "Topped the climb on your very first try."
+        case .send: return "Topped the climb after two or more tries."
+        case .project: return "A climb you're still working — tries logged, not sent yet."
+        case .attempt: return "A try that didn't top out."
+        }
+    }
+
+    /// Derives the outcome for a successful top-out from the number of tries:
+    /// a first-go top is a flash, anything more is a send. This lets the UI offer
+    /// a single "Send" action instead of making the climber choose flash vs send.
+    public static func topOut(attempts: Int) -> ClimbOutcome {
+        attempts <= 1 ? .flash : .send
+    }
 }
