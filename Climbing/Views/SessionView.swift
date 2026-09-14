@@ -258,14 +258,22 @@ struct SessionView: View {
     }
 
     /// Seeds a default V-scale on first launch and preselects a starting grade.
+    ///
+    /// The seeded instance is used directly rather than reading back through the
+    /// `scales` @Query, which does not reflect the insert synchronously within
+    /// this same call.
     private func prepareSession() {
+        let scale: CustomGradeScale?
         if scales.isEmpty {
-            let scale = CustomGradeScale(template: .standardVScale(), isDefault: true)
-            context.insert(scale)
+            let seeded = CustomGradeScale(template: .standardVScale(), isDefault: true)
+            context.insert(seeded)
             try? context.save()
+            scale = seeded
+        } else {
+            scale = defaultScale
         }
         if selectedGrade == nil {
-            selectedGrade = defaultScale?.grades.first
+            selectedGrade = scale?.grades.first
         }
     }
 }
