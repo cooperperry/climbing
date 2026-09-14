@@ -1,12 +1,13 @@
 import SwiftUI
 import SwiftData
 
-/// The app's home screen: a prominent live session timer plus quick-tap
-/// controls to log climbs without breaking flow between burns.
+/// The app's home screen: a prominent live session timer plus a low-friction
+/// logging flow. The climber tallies goes and taps a single **Send** button —
+/// the app derives flash vs. redpoint from the go count, so there's nothing to
+/// decide mid-session.
 struct SessionView: View {
     @Environment(\.modelContext) private var context
 
-    /// The most recently started session that has not been ended.
     @Query(
         filter: #Predicate<ClimbingSession> { $0.endTime == nil },
         sort: \ClimbingSession.startTime,
@@ -19,7 +20,12 @@ struct SessionView: View {
 
     @State private var selectedGrade: String?
     @State private var selectedStyle: ClimbStyle = .crimp
-    @State private var attempts: Int = 1
+    @State private var selectedAngle: ClimbAngle = .vertical
+    @State private var currentGo: Int = 1
+    @State private var showingInfo = false
+    @State private var lastLog: ClimbLog?
+    @State private var sendTrigger = 0
+    @State private var goTrigger = 0
 
     private var activeSession: ClimbingSession? { activeSessions.first }
 
@@ -38,6 +44,13 @@ struct SessionView: View {
             }
             .navigationTitle("Climbing")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingInfo = true
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                    }
+                }
                 if activeSession != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("End", role: .destructive, action: endSession)
@@ -45,6 +58,9 @@ struct SessionView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingInfo) { DefinitionsView() }
+        .sensoryFeedback(.success, trigger: sendTrigger)
+        .sensoryFeedback(.impact(weight: .light), trigger: goTrigger)
         .onAppear(perform: prepareSession)
     }
 
@@ -72,9 +88,9 @@ struct SessionView: View {
             VStack(spacing: 20) {
                 timerHeader(session)
                 gradePicker
+                anglePicker
                 stylePicker
-                attemptsStepper
-                outcomeButtons(session)
+                currentClimbCard(session)
                 recentLogs(session)
             }
             .padding()
@@ -116,6 +132,23 @@ struct SessionView: View {
         }
     }
 
+    private var anglePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Angle").font(.headline)
+            HStack(spacing: 8) {
+                ForEach(ClimbAngle.allCases) { angle in
+                    chip(
+                        title: angle.displayName,
+                        systemImage: angle.symbolName,
+                        isSelected: angle == selectedAngle
+                    ) {
+                        selectedAngle = angle
+                    }
+                }
+            }
+        }
+    }
+
     private var stylePicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Style").font(.headline)
@@ -136,37 +169,101 @@ struct SessionView: View {
         }
     }
 
-    private var attemptsStepper: some View {
-        Stepper(value: $attempts, in: 1...50) {
+    /// The seamless logging control: tally goes, then tap Send (auto flash/send)
+    /// or save as a project.
+    private func currentClimbCard(_ session: ClimbingSession) -> some View {
+        VStack(spacing: 16) {
             HStack {
-                Text("Attempts").font(.headline)
-                Spacer()
-                Text("\(attempts)")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    /// The quick-tap logging row: one button per outcome.
-    private func outcomeButtons(_ session: ClimbingSession) -> some View {
-        HStack(spacing: 12) {
-            ForEach(ClimbOutcome.allCases) { outcome in
-                Button {
-                    logClimb(outcome: outcome, in: session)
-                } label: {
-                    VStack(spacing: 6) {
-                        Image(systemName: outcome.symbolName).font(.title2)
-                        Text(outcome.displayName).font(.caption).bold()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("CURRENT CLIMB")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.secondary)
+                    Text(selectedGrade ?? "Pick a grade")
+                        .font(.title.bold())
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(color(for: outcome))
+                Spacer()
+                goStepper
+            }
+
+            Button(action: { logSend(in: session) }) {
+                VStack(spacing: 2) {
+                    Text("Send")
+                        .font(.headline)
+                    Text(currentGo <= 1 ? "Flash — first try" : "Redpoint — go \(currentGo)")
+                        .font(.caption)
+                        .opacity(0.9)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.green)
+            .disabled(selectedGrade == nil)
+
+            HStack(spacing: 12) {
+                Button {
+                    addGo()
+                } label: {
+                    Label("Add Go", systemImage: "plus.circle.fill")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.bordered)
+                .disabled(selectedGrade == nil)
+
+                Button {
+                    logProject(in: session)
+                } label: {
+                    Label("Project", systemImage: "hammer.fill")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.bordered)
+                .tint(.orange)
                 .disabled(selectedGrade == nil)
             }
+
+            if let lastLog {
+                Button(role: .destructive) {
+                    undo(lastLog)
+                } label: {
+                    Label("Undo last (\(lastLog.gradeLabel) \(lastLog.outcome.displayName))",
+                          systemImage: "arrow.uturn.backward")
+                        .font(.footnote)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
         }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var goStepper: some View {
+        HStack(spacing: 12) {
+            Button {
+                if currentGo > 1 { currentGo -= 1 }
+            } label: {
+                Image(systemName: "minus.circle.fill")
+            }
+            .disabled(currentGo <= 1)
+
+            VStack(spacing: 0) {
+                Text("\(currentGo)")
+                    .font(.title2.bold())
+                    .monospacedDigit()
+                Text("GO").font(.caption2).foregroundStyle(.secondary)
+            }
+            .frame(minWidth: 36)
+
+            Button {
+                addGo()
+            } label: {
+                Image(systemName: "plus.circle.fill")
+            }
+        }
+        .font(.title2)
+        .tint(.stravaOrange)
     }
 
     @ViewBuilder
@@ -180,9 +277,11 @@ struct SessionView: View {
                         Image(systemName: log.outcome.symbolName)
                             .foregroundStyle(color(for: log.outcome))
                         Text(log.gradeLabel).bold()
-                        Text(log.style.displayName).foregroundStyle(.secondary)
+                        Text("\(log.style.displayName) • \(log.angle.displayName)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                         Spacer()
-                        Text("^[\(log.attempts) attempt](inflect: true)")
+                        Text("^[\(log.attempts) go](inflect: true)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -241,28 +340,48 @@ struct SessionView: View {
         guard let session = activeSession else { return }
         session.endTime = .now
         try? context.save()
+        currentGo = 1
+        lastLog = nil
     }
 
-    private func logClimb(outcome: ClimbOutcome, in session: ClimbingSession) {
+    private func addGo() {
+        currentGo += 1
+        goTrigger += 1
+    }
+
+    private func logSend(in session: ClimbingSession) {
+        log(outcome: ClimbOutcome.topOut(attempts: currentGo), in: session)
+    }
+
+    private func logProject(in session: ClimbingSession) {
+        log(outcome: .project, in: session)
+    }
+
+    private func log(outcome: ClimbOutcome, in session: ClimbingSession) {
         guard let grade = selectedGrade else { return }
-        let log = ClimbLog(
+        let entry = ClimbLog(
             gradeLabel: grade,
-            attempts: attempts,
+            attempts: currentGo,
             outcome: outcome,
             style: selectedStyle,
+            angle: selectedAngle,
             session: session,
             gradeScale: defaultScale
         )
-        context.insert(log)
+        context.insert(entry)
         try? context.save()
-        attempts = 1
+        lastLog = entry
+        sendTrigger += 1
+        currentGo = 1
+    }
+
+    private func undo(_ log: ClimbLog) {
+        context.delete(log)
+        try? context.save()
+        lastLog = nil
     }
 
     /// Seeds a default V-scale on first launch and preselects a starting grade.
-    ///
-    /// The seeded instance is used directly rather than reading back through the
-    /// `scales` @Query, which does not reflect the insert synchronously within
-    /// this same call.
     private func prepareSession() {
         let scale: CustomGradeScale?
         if scales.isEmpty {
