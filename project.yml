@@ -1,0 +1,60 @@
+name: Climbing
+
+options:
+  bundleIdPrefix: com.cooperperry
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+targets:
+  Climbing:
+    type: application
+    platform: iOS
+    sources:
+      - path: Climbing
+    dependencies:
+      - sdk: HealthKit.framework
+    entitlements:
+      path: Climbing/Climbing.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbing
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads active energy and heart rate from Apple Health to show your effort during a session."
+
+  ClimbingTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ClimbingTests
+    dependencies:
+      - target: Climbing
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbingTests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Climbing:
+    build:
+      targets:
+        Climbing: all
+        ClimbingTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - ClimbingTests

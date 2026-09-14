@@ -1,0 +1,7 @@
+{
+  "name": "Climbing (iOS SwiftData domain / Linux CI)",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "swift build"
+}
