@@ -17,6 +17,8 @@ struct SessionView: View {
     @Query(sort: \CustomGradeScale.createdAt)
     private var scales: [CustomGradeScale]
 
+    @Query private var allSessions: [ClimbingSession]
+
     @State private var selectedGrade: String?
     @State private var selectedStyle: ClimbStyle = .crimp
     @State private var showingInfo = false
@@ -24,6 +26,8 @@ struct SessionView: View {
     @State private var sendTrigger = 0
     @State private var floatingGain: Int?
     @State private var health = HealthManager()
+    @State private var summarySession: ClimbingSession?
+    @State private var summaryRecords: [PersonalRecord] = []
 
     private var activeSession: ClimbingSession? { activeSessions.first }
 
@@ -56,6 +60,9 @@ struct SessionView: View {
             .overlay(alignment: .top) { floatingGainBadge }
         }
         .sheet(isPresented: $showingInfo) { DefinitionsView() }
+        .sheet(item: $summarySession) { session in
+            SessionSummaryView(session: session, records: summaryRecords, health: health.summary)
+        }
         .sensoryFeedback(.success, trigger: sendTrigger)
         .onAppear(perform: prepareSession)
     }
@@ -290,8 +297,15 @@ struct SessionView: View {
     private func endSession() {
         guard let session = activeSession else { return }
         session.endTime = .now
+        let previous = SessionRecords.previousBests(excluding: session, in: allSessions)
+        summaryRecords = RecordsEngine.newRecords(
+            current: session.totals(),
+            hardestSendGradeLabel: session.hardestSend?.gradeLabel,
+            previous: previous
+        )
         try? context.save()
         lastLog = nil
+        summarySession = session
     }
 
     private func log(outcome: ClimbOutcome, attempts: Int, in session: ClimbingSession) {
