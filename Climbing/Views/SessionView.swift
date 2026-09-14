@@ -101,7 +101,7 @@ struct SessionView: View {
                     }
                 }
                 logCard(session)
-                if let liveTrace, liveTrace.hasData {
+                if let liveTrace {
                     EffortStripView(trace: liveTrace, title: liveTraceTitle)
                 }
                 recentLogs(session)
@@ -337,7 +337,8 @@ struct SessionView: View {
         sendTrigger += 1
         showGain(entry.points)
         if outcome.isCompletion {
-            liveTrace = nil
+            liveTraceTitle = "\(grade) \(outcome.displayName)"
+            liveTrace = EffortTrace()
             Task { await captureEffort(for: entry, in: session, previousLogAt: previousLogAt) }
         } else {
             liveTrace = nil
@@ -356,17 +357,23 @@ struct SessionView: View {
         )
         async let motion = WatchMotionClient.shared.frames(from: bounds.start, to: bounds.end)
         async let hrs = health.heartRateTimeline(from: bounds.start, to: bounds.end)
-        let trace = EffortMath.trace(
+        var trace = EffortMath.trace(
             motion: await motion,
             heartRates: await hrs,
             start: bounds.start,
             end: bounds.end
         )
-        guard trace.hasData else { return }
-        entry.effortTrace = trace
-        liveTrace = trace
+        #if targetEnvironment(simulator)
+        if !trace.hasData {
+            trace = .demo
+        }
+        #endif
         liveTraceTitle = "\(entry.gradeLabel) \(entry.outcome.displayName)"
-        try? context.save()
+        liveTrace = trace
+        if trace.hasData {
+            entry.effortTrace = trace
+            try? context.save()
+        }
     }
 
     private func beginWatchCapture() {

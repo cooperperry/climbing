@@ -24,19 +24,29 @@ struct EffortStripView: View {
             HStack {
                 if trace.hasMotion {
                     Label("Wrist motion", systemImage: "applewatch")
-                } else {
+                } else if trace.hasHeartRate {
                     Label("Heart rate", systemImage: "heart.fill")
+                } else {
+                    Label("No Watch data yet", systemImage: "applewatch")
                 }
                 Spacer()
                 if let hr = trace.averageHeartRate {
                     Text("\(hr) bpm")
                         .monospacedDigit()
                 }
-                Text(SessionClock.format(trace.duration))
-                    .monospacedDigit()
+                if trace.duration > 0 {
+                    Text(SessionClock.format(trace.duration))
+                        .monospacedDigit()
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            if !trace.hasData {
+                Text("Wear your Apple Watch and connect Health, then send or flash. You'll get wrist-motion bursts with heart rate — not a drawing of the route.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
