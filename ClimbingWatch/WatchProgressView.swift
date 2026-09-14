@@ -19,6 +19,12 @@ struct WatchProgressView: View {
                         .monospacedDigit()
                 }
 
+                if let headline = store.snapshot.styleHeadline {
+                    Text(headline)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     stat("\(store.snapshot.lifetimeClimbs)", "Climbs")
                     stat("\(store.snapshot.lifetimeSends)", "Sends")

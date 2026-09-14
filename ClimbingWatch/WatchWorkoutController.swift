@@ -103,6 +103,7 @@ final class WatchWorkoutController: NSObject, HKWorkoutSessionDelegate, HKLiveWo
                   collectedTypes.contains(heart) else { return }
             self.ingestHeartRate(from: workoutBuilder)
             WatchStore.shared.broadcastBPM()
+            WatchStore.shared.evaluateRest()
         }
     }
 }

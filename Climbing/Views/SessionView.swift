@@ -117,6 +117,7 @@ struct SessionView: View {
         ScrollView {
             VStack(spacing: 20) {
                 timerHeader(session)
+                restBanner
                 HealthCard(
                     summary: health.summary,
                     status: health.status,
@@ -140,6 +141,55 @@ struct SessionView: View {
             while !Task.isCancelled {
                 await health.refresh(from: session.startTime, to: .now)
                 try? await Task.sleep(for: .seconds(20))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var restBanner: some View {
+        if let plan = bridge.restPlan {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                let phase = RecoveryMath.phase(
+                    plan: plan,
+                    now: timeline.date,
+                    currentBPM: liveBPM
+                )
+                HStack(spacing: 12) {
+                    Image(systemName: phase.isFinished ? "checkmark.circle.fill" : "hourglass")
+                        .font(.title2)
+                        .foregroundStyle(phase.isFinished ? .green : .stravaOrange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(phase.isFinished ? "Ready" : "Rest")
+                            .font(.headline)
+                        if case .resting(let remaining) = phase {
+                            Text(SessionClock.format(remaining))
+                                .font(.title3.bold())
+                                .monospacedDigit()
+                                .foregroundStyle(.stravaOrange)
+                            if let target = plan.targetBPM {
+                                Text("Until \(target) bpm or timer")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if phase == .recovered {
+                            Text("Heart rate recovered")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Timer up — go when you're ready")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button("Skip", action: PhoneWatchBridge.shared.skipRest)
+                        .font(.subheadline.bold())
+                }
+                .padding()
+                .background(
+                    (phase.isFinished ? Color.green : Color.stravaOrange).opacity(0.14),
+                    in: RoundedRectangle(cornerRadius: 20)
+                )
             }
         }
     }
@@ -372,6 +422,7 @@ struct SessionView: View {
         sendTrigger += 1
         showGain(entry.points)
         PhoneWatchBridge.shared.publishSnapshot()
+        PhoneWatchBridge.shared.beginRest(currentBPM: liveBPM)
         if outcome.isCompletion {
             liveTraceTitle = "\(grade) \(outcome.displayName)"
             liveTrace = EffortTrace()
@@ -431,6 +482,7 @@ struct SessionView: View {
         try? context.save()
         lastLog = nil
         liveTrace = nil
+        PhoneWatchBridge.shared.skipRest()
     }
 
     private func prepareSession() {

@@ -15,6 +15,7 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
     var liveBPM: Int?
     var selectedGrade: String?
     var selectedStyle: ClimbStyle = .crimp
+    var restPlan: RestPlan?
 
     private var context: ModelContext?
     private var session: WCSession? {
@@ -41,6 +42,22 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
     func stopWatchSide() {
         send([WatchSync.kind: WatchSync.stop])
         liveBPM = nil
+        restPlan = nil
+        publishSnapshot()
+    }
+
+    func beginRest(heartRates: [HeartRateSample] = [], currentBPM: Int? = nil, plan: RestPlan? = nil) {
+        restPlan = plan ?? RecoveryMath.plan(
+            at: .now,
+            heartRates: heartRates,
+            currentBPM: currentBPM ?? liveBPM
+        )
+        publishSnapshot()
+    }
+
+    func skipRest() {
+        restPlan = nil
+        send([WatchSync.kind: WatchSync.skipRest])
         publishSnapshot()
     }
 
@@ -94,6 +111,12 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             replyHandler?([:])
             return
         }
+        if kind == WatchSync.skipRest {
+            restPlan = nil
+            publishSnapshot()
+            replyHandler?([:])
+            return
+        }
         guard let context, let kind else {
             replyHandler?([:])
             return
@@ -132,6 +155,7 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         session.endTime = .now
         try? context.save()
         liveBPM = nil
+        restPlan = nil
     }
 
     private func log(from message: [String: Any], in context: ModelContext) {
@@ -156,12 +180,18 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         )
         context.insert(entry)
         try? context.save()
+        var incomingHR: [HeartRateSample] = []
+        if let data = message[WatchSync.heartRates] as? Data {
+            incomingHR = (try? JSONDecoder().decode([HeartRateSample].self, from: data)) ?? []
+        }
+        if let data = message[WatchSync.rest] as? Data,
+           let plan = try? JSONDecoder().decode(RestPlan.self, from: data) {
+            restPlan = plan
+        } else {
+            restPlan = RecoveryMath.plan(at: entry.loggedAt, heartRates: incomingHR, currentBPM: liveBPM)
+        }
         if outcome.isCompletion {
-            var incoming: [HeartRateSample] = []
-            if let data = message[WatchSync.heartRates] as? Data {
-                incoming = (try? JSONDecoder().decode([HeartRateSample].self, from: data)) ?? []
-            }
-            Task { await captureEffort(for: entry, in: session, previousLogAt: previousLogAt, watchSamples: incoming) }
+            Task { await captureEffort(for: entry, in: session, previousLogAt: previousLogAt, watchSamples: incomingHR) }
         }
     }
 
@@ -170,6 +200,8 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
               let last = session.logs.max(by: { $0.loggedAt < $1.loggedAt }) else { return }
         context.delete(last)
         try? context.save()
+        restPlan = nil
+        send([WatchSync.kind: WatchSync.skipRest])
     }
 
     private func captureEffort(
@@ -231,6 +263,12 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         let level = ScoreEngine.level(forTotalPoints: points)
         let sends = allLogs.filter { $0.outcome.isCompletion }
         let hardest = sends.max { $0.gradeIndex < $1.gradeIndex }?.gradeLabel
+        let insight = StyleWeakSpotMath.insight(
+            logs: allLogs.map {
+                StyleLog(style: $0.style, outcome: $0.outcome, loggedAt: $0.loggedAt)
+            },
+            now: Date()
+        )
         return WatchSnapshot(
             isActive: session != nil,
             startTime: session?.startTime.timeIntervalSince1970,
@@ -257,7 +295,9 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             lifetimePoints: points,
             hardestSend: hardest,
             levelNumber: level.number,
-            levelTitle: level.title
+            levelTitle: level.title,
+            rest: session != nil ? restPlan : nil,
+            styleHeadline: insight.headline
         )
     }
 

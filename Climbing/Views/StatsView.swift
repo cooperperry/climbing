@@ -31,6 +31,7 @@ struct StatsView: View {
                         VStack(spacing: 16) {
                             levelCard
                             statGrid
+                            styleCard
                             pyramidCard
                             recentSessionsCard
                         }
@@ -112,6 +113,64 @@ struct StatsView: View {
             Text(label.uppercased())
                 .font(.caption2.bold())
                 .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    // MARK: - Style weak spot
+
+    private var styleInsight: StyleInsight {
+        StyleWeakSpotMath.insight(
+            logs: logs.map { StyleLog(style: $0.style, outcome: $0.outcome, loggedAt: $0.loggedAt) },
+            now: Date()
+        )
+    }
+
+    private var styleCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Style")
+                    .font(.headline)
+                Spacer()
+                Text("Last \(styleInsight.windowDays) days")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if styleInsight.hasEnoughData {
+                if let headline = styleInsight.headline {
+                    Text(headline)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(styleInsight.spots) { spot in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(spot.style.displayName)
+                                .font(.subheadline.bold())
+                            Spacer()
+                            Text(spot.percentText)
+                                .font(.subheadline.bold())
+                                .monospacedDigit()
+                                .foregroundStyle(spot.style == styleInsight.weakest?.style ? Color.stravaOrange : Color.secondary)
+                            Text("\(spot.sends)/\(spot.goes)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        ProgressView(value: spot.sendRate)
+                            .tint(spot.style == styleInsight.weakest?.style ? .stravaOrange : .green)
+                    }
+                }
+                Text("Send rate on 3+ goes of a style")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Log 3 or more goes of the same style to see where you send — and where you stall.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()

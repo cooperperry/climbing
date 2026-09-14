@@ -5,6 +5,7 @@ import HealthKit
 @main
 struct ClimbingWatchApp: App {
     @WKApplicationDelegateAdaptor(WatchAppDelegate.self) private var delegate
+    @State private var store = WatchStore.shared
 
     init() {
         _ = WatchStore.shared
@@ -13,9 +14,13 @@ struct ClimbingWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TabView {
+            if store.snapshot.isActive {
                 NavigationStack { WatchSessionView() }
-                NavigationStack { WatchProgressView() }
+            } else {
+                TabView {
+                    NavigationStack { WatchSessionView() }
+                    NavigationStack { WatchProgressView() }
+                }
             }
         }
     }

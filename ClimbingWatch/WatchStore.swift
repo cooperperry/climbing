@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import WatchConnectivity
+import WatchKit
 
 /// Watch-side session mirror. Phone owns SwiftData; this keeps the Watch UI live.
 @Observable
@@ -11,6 +12,12 @@ final class WatchStore: NSObject, WCSessionDelegate {
     var snapshot = WatchSnapshot.empty
     var selectedGrade: String?
     var selectedStyle: ClimbStyle = .crimp
+    var toast: String?
+    var logPulse = 0
+    var restPlan: RestPlan?
+
+    private var skippedRestID: UUID?
+    private var lastReadyHaptic: UUID?
 
     private var session: WCSession? {
         WCSession.isSupported() ? .default : nil
@@ -47,11 +54,19 @@ final class WatchStore: NSObject, WCSessionDelegate {
         send([WatchSync.kind: WatchSync.stop])
         snapshot.isActive = false
         snapshot.startTime = nil
+        restPlan = nil
         Task { await WatchWorkoutController.shared.stop() }
     }
 
     func log(outcome: ClimbOutcome) {
         guard let grade = selectedGrade ?? snapshot.selectedGrade else { return }
+        let plan = RecoveryMath.plan(
+            at: Date(),
+            heartRates: WatchWorkoutController.shared.recentHeartRates(seconds: RecoveryMath.effortWindow),
+            currentBPM: WatchWorkoutController.shared.currentBPM
+        )
+        restPlan = plan
+        skippedRestID = nil
         var message: [String: Any] = [
             WatchSync.kind: WatchSync.log,
             WatchSync.outcome: outcome.rawValue,
@@ -60,6 +75,9 @@ final class WatchStore: NSObject, WCSessionDelegate {
         ]
         if let data = try? JSONEncoder().encode(WatchWorkoutController.shared.recentHeartRates()) {
             message[WatchSync.heartRates] = data
+        }
+        if let data = try? JSONEncoder().encode(plan) {
+            message[WatchSync.rest] = data
         }
         if outcome.isCompletion, !WatchWorkoutController.shared.recentHeartRates().isEmpty {
             snapshot.lastTrace = EffortMath.trace(
@@ -70,12 +88,50 @@ final class WatchStore: NSObject, WCSessionDelegate {
             snapshot.lastTraceTitle = "\(grade) \(outcome.displayName)"
         }
         send(message)
+        toast = "\(grade) \(outcome.displayName)"
+        logPulse += 1
+        WKInterfaceDevice.current().play(.success)
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            if toast == "\(grade) \(outcome.displayName)" { toast = nil }
+        }
+    }
+
+    func cycleStyle() {
+        let options = ClimbStyle.quickTap
+        if let index = options.firstIndex(of: selectedStyle) {
+            selectedStyle = options[(index + 1) % options.count]
+        } else {
+            selectedStyle = options[0]
+        }
     }
 
     func undo() {
         send([WatchSync.kind: WatchSync.undo])
         if !snapshot.logs.isEmpty {
             snapshot.logs.removeFirst()
+        }
+        skipRest()
+    }
+
+    func skipRest(notifyPhone: Bool = true) {
+        skippedRestID = restPlan?.id
+        restPlan = nil
+        if notifyPhone {
+            send([WatchSync.kind: WatchSync.skipRest])
+        }
+    }
+
+    func evaluateRest(now: Date = Date()) {
+        guard let plan = restPlan else { return }
+        let phase = RecoveryMath.phase(
+            plan: plan,
+            now: now,
+            currentBPM: WatchWorkoutController.shared.currentBPM ?? liveBPM
+        )
+        if phase.isFinished, lastReadyHaptic != plan.id {
+            lastReadyHaptic = plan.id
+            WKInterfaceDevice.current().play(.notification)
         }
     }
 
@@ -89,6 +145,11 @@ final class WatchStore: NSObject, WCSessionDelegate {
         snapshot = snap
         if selectedGrade == nil { selectedGrade = snap.selectedGrade ?? snap.grades.first }
         if let style = ClimbStyle(rawValue: snap.selectedStyle) { selectedStyle = style }
+        if !snap.isActive {
+            restPlan = nil
+        } else if let rest = snap.rest, rest.id != skippedRestID {
+            restPlan = rest
+        }
     }
 
     private func send(_ message: [String: Any]) {
@@ -123,11 +184,15 @@ final class WatchStore: NSObject, WCSessionDelegate {
             if let data = message[WatchSync.payload] as? Data {
                 self.apply(data)
             }
-            if message[WatchSync.kind] as? String == WatchSync.start {
+            let kind = message[WatchSync.kind] as? String
+            if kind == WatchSync.start {
                 await WatchWorkoutController.shared.start()
             }
-            if message[WatchSync.kind] as? String == WatchSync.stop {
+            if kind == WatchSync.stop {
                 await WatchWorkoutController.shared.stop()
+            }
+            if kind == WatchSync.skipRest {
+                self.skipRest(notifyPhone: false)
             }
         }
     }
@@ -152,6 +217,9 @@ final class WatchStore: NSObject, WCSessionDelegate {
                 replyHandler([:])
             case WatchSync.stop:
                 await WatchWorkoutController.shared.stop()
+                replyHandler([:])
+            case WatchSync.skipRest:
+                self.skipRest(notifyPhone: false)
                 replyHandler([:])
             default:
                 if let data = message[WatchSync.payload] as? Data {
