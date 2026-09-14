@@ -53,8 +53,23 @@ final class HealthManager {
         async let heartRates = heartRateSamples(start: start, end: end)
         summary = await HealthMath.summary(
             activeCalories: calories,
-            heartRates: heartRates
+            heartRates: heartRates.map(\.bpm)
         )
+    }
+
+    /// Timestamped heart-rate samples for overlaying a send trace.
+    func heartRateTimeline(from start: Date, to end: Date) async -> [HeartRateSample] {
+        await heartRateSamples(start: start, end: end)
+    }
+
+    /// Launches the Watch app into a climbing workout so it can record wrist
+    /// motion. No-ops when a Watch isn't paired or the companion isn't installed.
+    func startWatchWorkout() async {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        let config = HKWorkoutConfiguration()
+        config.activityType = .climbing
+        config.locationType = .indoor
+        try? await store.startWatchApp(with: config)
     }
 
     private func activeEnergy(start: Date, end: Date) async -> Double {
@@ -75,7 +90,7 @@ final class HealthManager {
         }
     }
 
-    private func heartRateSamples(start: Date, end: Date) async -> [Double] {
+    private func heartRateSamples(start: Date, end: Date) async -> [HeartRateSample] {
         guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
             return []
         }
@@ -86,10 +101,14 @@ final class HealthManager {
                 sampleType: type,
                 predicate: predicate,
                 limit: HKObjectQueryNoLimit,
-                sortDescriptors: nil
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
             ) { _, samples, _ in
-                let values = (samples as? [HKQuantitySample])?
-                    .map { $0.quantity.doubleValue(for: unit) } ?? []
+                let values = (samples as? [HKQuantitySample])?.map {
+                    HeartRateSample(
+                        timestamp: $0.startDate.timeIntervalSince1970,
+                        bpm: $0.quantity.doubleValue(for: unit)
+                    )
+                } ?? []
                 continuation.resume(returning: values)
             }
             store.execute(query)

@@ -104,6 +104,24 @@ final class ClimbingModelTests: XCTestCase {
         XCTAssertEqual(fetched.attempts, 3)
     }
 
+    func testEffortTraceRoundTripsThroughSwiftData() throws {
+        let context = try makeContext()
+        let log = ClimbLog(gradeLabel: "V4", outcome: .send, style: .crimp)
+        let trace = EffortTrace(
+            duration: 12,
+            points: [EffortPoint(t: 0, intensity: 0.4, verticalness: 0.8, heartRate: 140)],
+            character: .vertical,
+            peakIntensity: 0.4,
+            averageHeartRate: 140
+        )
+        log.effortTrace = trace
+        context.insert(log)
+        try context.save()
+
+        let fetched = try XCTUnwrap(try context.fetch(FetchDescriptor<ClimbLog>()).first)
+        XCTAssertEqual(fetched.effortTrace, trace)
+    }
+
     func testAngleDefaultsToVertical() throws {
         let context = try makeContext()
         let log = ClimbLog(gradeLabel: "V3", outcome: .send, style: .crimp)

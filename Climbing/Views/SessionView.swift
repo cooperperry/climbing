@@ -28,6 +28,8 @@ struct SessionView: View {
     @State private var health = HealthManager()
     @State private var summarySession: ClimbingSession?
     @State private var summaryRecords: [PersonalRecord] = []
+    @State private var liveTrace: EffortTrace?
+    @State private var liveTraceTitle = "Send trace"
 
     private var activeSession: ClimbingSession? { activeSessions.first }
 
@@ -64,7 +66,10 @@ struct SessionView: View {
             SessionSummaryView(session: session, records: summaryRecords, health: health.summary)
         }
         .sensoryFeedback(.success, trigger: sendTrigger)
-        .onAppear(perform: prepareSession)
+        .onAppear {
+            prepareSession()
+            if activeSession != nil { beginWatchCapture() }
+        }
     }
 
     // MARK: - Idle
@@ -92,9 +97,13 @@ struct SessionView: View {
                     Task {
                         await health.requestAuthorization()
                         await health.refresh(from: session.startTime, to: .now)
+                        await health.startWatchWorkout()
                     }
                 }
                 logCard(session)
+                if let liveTrace, liveTrace.hasData {
+                    EffortStripView(trace: liveTrace, title: liveTraceTitle)
+                }
                 recentLogs(session)
             }
             .padding()
@@ -292,6 +301,7 @@ struct SessionView: View {
         let session = ClimbingSession()
         context.insert(session)
         try? context.save()
+        beginWatchCapture()
     }
 
     private func endSession() {
@@ -305,11 +315,14 @@ struct SessionView: View {
         )
         try? context.save()
         lastLog = nil
+        liveTrace = nil
         summarySession = session
+        WatchMotionClient.shared.stopRecording()
     }
 
     private func log(outcome: ClimbOutcome, attempts: Int, in session: ClimbingSession) {
         guard let grade = selectedGrade else { return }
+        let previousLogAt = session.logs.map(\.loggedAt).max()
         let entry = ClimbLog(
             gradeLabel: grade,
             attempts: attempts,
@@ -323,6 +336,42 @@ struct SessionView: View {
         lastLog = entry
         sendTrigger += 1
         showGain(entry.points)
+        if outcome.isCompletion {
+            liveTrace = nil
+            Task { await captureEffort(for: entry, in: session, previousLogAt: previousLogAt) }
+        } else {
+            liveTrace = nil
+        }
+    }
+
+    private func captureEffort(
+        for entry: ClimbLog,
+        in session: ClimbingSession,
+        previousLogAt: Date?
+    ) async {
+        let bounds = EffortWindow.bounds(
+            loggedAt: entry.loggedAt,
+            sessionStart: session.startTime,
+            previousLogAt: previousLogAt
+        )
+        async let motion = WatchMotionClient.shared.frames(from: bounds.start, to: bounds.end)
+        async let hrs = health.heartRateTimeline(from: bounds.start, to: bounds.end)
+        let trace = EffortMath.trace(
+            motion: await motion,
+            heartRates: await hrs,
+            start: bounds.start,
+            end: bounds.end
+        )
+        guard trace.hasData else { return }
+        entry.effortTrace = trace
+        liveTrace = trace
+        liveTraceTitle = "\(entry.gradeLabel) \(entry.outcome.displayName)"
+        try? context.save()
+    }
+
+    private func beginWatchCapture() {
+        WatchMotionClient.shared.startRecording()
+        Task { await health.startWatchWorkout() }
     }
 
     private func showGain(_ points: Int) {
@@ -337,6 +386,7 @@ struct SessionView: View {
         context.delete(entry)
         try? context.save()
         lastLog = nil
+        liveTrace = nil
     }
 
     private func prepareSession() {

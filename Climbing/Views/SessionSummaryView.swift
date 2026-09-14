@@ -9,6 +9,16 @@ struct SessionSummaryView: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    private var sendTraces: [(ClimbLog, EffortTrace)] {
+        session.logs
+            .filter(\.outcome.isCompletion)
+            .sorted { $0.loggedAt < $1.loggedAt }
+            .compactMap { log in
+                guard let trace = log.effortTrace, trace.hasData else { return nil }
+                return (log, trace)
+            }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -17,6 +27,12 @@ struct SessionSummaryView: View {
                     if !records.isEmpty { recordsCard }
                     statsGrid
                     if health.hasData { healthCard }
+                    ForEach(sendTraces, id: \.0.persistentModelID) { log, trace in
+                        EffortStripView(
+                            trace: trace,
+                            title: "\(log.gradeLabel) \(log.outcome.displayName)"
+                        )
+                    }
                 }
                 .padding()
             }
