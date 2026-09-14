@@ -51,9 +51,11 @@ final class HealthManager {
         guard HKHealthStore.isHealthDataAvailable(), status == .authorized else { return }
         async let calories = activeEnergy(start: start, end: end)
         async let heartRates = heartRateSamples(start: start, end: end)
-        summary = await HealthMath.summary(
-            activeCalories: calories,
-            heartRates: heartRates.map(\.bpm)
+        let burned = await calories
+        let samples = await heartRates
+        summary = HealthMath.summary(
+            activeCalories: burned,
+            heartRates: samples.map(\.bpm)
         )
     }
 

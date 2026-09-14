@@ -70,7 +70,6 @@ final class WorkoutMotionManager: NSObject, WCSessionDelegate, HKWorkoutSessionD
         var toRead = Set<HKObjectType>()
         if let heart = HKObjectType.quantityType(forIdentifier: .heartRate) {
             toRead.insert(heart)
-            toShare.insert(heart)
         }
         try? await store.requestAuthorization(toShare: toShare, read: toRead)
     }

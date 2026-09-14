@@ -27,10 +27,10 @@ struct SessionSummaryView: View {
                     if !records.isEmpty { recordsCard }
                     statsGrid
                     if health.hasData { healthCard }
-                    ForEach(sendTraces, id: \.0.persistentModelID) { log, trace in
+                    ForEach(Array(sendTraces.enumerated()), id: \.offset) { _, pair in
                         EffortStripView(
-                            trace: trace,
-                            title: "\(log.gradeLabel) \(log.outcome.displayName)"
+                            trace: pair.1,
+                            title: "\(pair.0.gradeLabel) \(pair.0.outcome.displayName)"
                         )
                     }
                 }
