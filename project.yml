@@ -19,6 +19,10 @@ targets:
     platform: iOS
     sources:
       - path: Climbing
+    entitlements:
+      path: Climbing/Climbing.entitlements
+      properties:
+        com.apple.developer.healthkit: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbing
@@ -26,6 +30,7 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads active energy and heart rate from Apple Health to show your effort during a session."
 
   ClimbingTests:
     type: bundle.unit-test
