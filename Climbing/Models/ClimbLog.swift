@@ -25,7 +25,11 @@ final class ClimbLog {
     var style: ClimbStyle
 
     /// The wall angle of the climb.
-    var angle: ClimbAngle
+    ///
+    /// The inline default is required for SwiftData lightweight migration: it
+    /// lets the store backfill this attribute on rows saved before `angle`
+    /// existed, instead of reading `nil` and crashing on the cast.
+    var angle: ClimbAngle = .vertical
 
     var loggedAt: Date
 
