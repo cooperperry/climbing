@@ -20,9 +20,8 @@ struct SessionView: View {
     @Query private var allSessions: [ClimbingSession]
 
     @State private var selectedGrade: String?
-    @State private var selectedStyle: ClimbStyle = .crimp
     @State private var showingInfo = false
-    @State private var lastLog: ClimbLog?
+    @State private var tagTick = 0
     @State private var sendTrigger = 0
     @State private var floatingGain: Int?
     @State private var summarySession: ClimbingSession?
@@ -80,15 +79,10 @@ struct SessionView: View {
             prepareSession()
             PhoneWatchBridge.shared.attach(context: context)
             PhoneWatchBridge.shared.selectedGrade = selectedGrade
-            PhoneWatchBridge.shared.selectedStyle = selectedStyle
             if activeSession != nil { beginWatchCapture() }
         }
         .onChange(of: selectedGrade) { _, grade in
             PhoneWatchBridge.shared.selectedGrade = grade
-            PhoneWatchBridge.shared.publishSnapshot()
-        }
-        .onChange(of: selectedStyle) { _, style in
-            PhoneWatchBridge.shared.selectedStyle = style
             PhoneWatchBridge.shared.publishSnapshot()
         }
         .onChange(of: activeSessions.count) { _, _ in
@@ -228,35 +222,33 @@ struct SessionView: View {
 
             HStack(spacing: 12) {
                 logButton(
-                    title: "Flash", subtitle: "First try",
-                    systemImage: "bolt.fill", tint: .yellow
+                    title: ClimbOutcome.flash.displayName,
+                    subtitle: ClimbOutcome.flash.logSubtitle,
+                    systemImage: ClimbOutcome.flash.symbolName, tint: .yellow
                 ) { log(outcome: .flash, attempts: 1, in: session) }
 
                 logButton(
-                    title: "Send", subtitle: "After a few tries",
-                    systemImage: "checkmark.circle.fill", tint: .green
+                    title: ClimbOutcome.send.displayName,
+                    subtitle: "After a few tries",
+                    systemImage: ClimbOutcome.send.symbolName, tint: .green
                 ) { log(outcome: .send, attempts: 2, in: session) }
             }
 
-            HStack {
-                Button {
-                    log(outcome: .attempt, attempts: 1, in: session)
-                } label: {
-                    Label("Didn't send", systemImage: "arrow.uturn.up")
-                }
-                .buttonStyle(.bordered)
-                .disabled(selectedGrade == nil)
-
-                Spacer()
-
-                styleMenu
+            Button {
+                log(outcome: .attempt, attempts: 1, in: session)
+            } label: {
+                Label(ClimbOutcome.attempt.displayName, systemImage: ClimbOutcome.attempt.symbolName)
             }
+            .buttonStyle(.bordered)
+            .disabled(selectedGrade == nil)
 
-            if let lastLog {
+            if let latest = session.logs.max(by: { $0.loggedAt < $1.loggedAt }) {
+                lastClimbTags(latest)
+                    .id("\(latest.loggedAt.timeIntervalSince1970)-\(tagTick)")
                 Button(role: .destructive) {
-                    undo(lastLog)
+                    undo(latest)
                 } label: {
-                    Label("Undo last (\(lastLog.gradeLabel))", systemImage: "arrow.uturn.backward")
+                    Label("Undo last (\(latest.gradeLabel))", systemImage: "arrow.uturn.backward")
                         .font(.footnote)
                 }
                 .buttonStyle(.plain)
@@ -301,17 +293,54 @@ struct SessionView: View {
         .disabled(selectedGrade == nil)
     }
 
-    private var styleMenu: some View {
-        Menu {
-            Picker("Style", selection: $selectedStyle) {
-                ForEach(ClimbStyle.allCases) { style in
-                    Text(style.displayName).tag(style)
+    private func lastClimbTags(_ log: ClimbLog) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("How did it feel?")
+                    .font(.subheadline.bold())
+                Text("Optional. A climb can be both — crimps on an overhang.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            tagRow(title: "Holds") {
+                ForEach(ClimbStyle.quickTap) { style in
+                    chip(title: style.displayName, isSelected: log.style == style) {
+                        log.style = log.style == style ? nil : style
+                        saveTags()
+                    }
                 }
             }
-        } label: {
-            Label(selectedStyle.displayName, systemImage: "tag")
-                .font(.subheadline)
+
+            tagRow(title: "Wall") {
+                ForEach(ClimbAngle.allCases) { angle in
+                    chip(title: angle.displayName, isSelected: log.angle == angle) {
+                        log.angle = log.angle == angle ? nil : angle
+                        saveTags()
+                    }
+                }
+            }
         }
+        .padding(.top, 4)
+    }
+
+    private func tagRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    content()
+                }
+            }
+        }
+    }
+
+    private func saveTags() {
+        tagTick += 1
+        try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
     }
 
     @ViewBuilder
@@ -339,9 +368,11 @@ struct SessionView: View {
                         Image(systemName: entry.outcome.symbolName)
                             .foregroundStyle(color(for: entry.outcome))
                         Text(entry.gradeLabel).bold()
-                        Text(entry.style.displayName)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        if let tags = tagSummary(entry) {
+                            Text(tags)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
                         Text(entry.outcome.displayName)
                             .font(.caption)
@@ -355,6 +386,11 @@ struct SessionView: View {
     }
 
     // MARK: - Reusable
+
+    private func tagSummary(_ entry: ClimbLog) -> String? {
+        let parts = [entry.style?.displayName, entry.angle?.displayName].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 
     private func chip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -399,7 +435,6 @@ struct SessionView: View {
             previous: previous
         )
         try? context.save()
-        lastLog = nil
         liveTrace = nil
         summarySession = session
         PhoneWatchBridge.shared.stopWatchSide()
@@ -412,13 +447,11 @@ struct SessionView: View {
             gradeLabel: grade,
             attempts: attempts,
             outcome: outcome,
-            style: selectedStyle,
             session: session,
             gradeScale: defaultScale
         )
         context.insert(entry)
         try? context.save()
-        lastLog = entry
         sendTrigger += 1
         showGain(entry.points)
         PhoneWatchBridge.shared.publishSnapshot()
@@ -480,7 +513,6 @@ struct SessionView: View {
     private func undo(_ entry: ClimbLog) {
         context.delete(entry)
         try? context.save()
-        lastLog = nil
         liveTrace = nil
         PhoneWatchBridge.shared.skipRest()
     }

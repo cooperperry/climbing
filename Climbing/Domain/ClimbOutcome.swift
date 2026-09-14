@@ -22,7 +22,17 @@ public enum ClimbOutcome: String, CaseIterable, Codable, Identifiable, Sendable 
         case .flash: return "Flash"
         case .send: return "Send"
         case .project: return "Project"
-        case .attempt: return "Attempt"
+        case .attempt: return "Didn't send"
+        }
+    }
+
+    /// One-line hint under the log button so new climbers don't need gym jargon.
+    public var logSubtitle: String {
+        switch self {
+        case .flash: return "First try"
+        case .send: return "Topped it"
+        case .project: return "Still working"
+        case .attempt: return "Fell / no top"
         }
     }
 
@@ -61,7 +71,7 @@ public enum ClimbOutcome: String, CaseIterable, Codable, Identifiable, Sendable 
         case .flash: return "Topped the climb on your very first try."
         case .send: return "Topped the climb after two or more tries."
         case .project: return "A climb you're still working — tries logged, not sent yet."
-        case .attempt: return "A try that didn't top out."
+        case .attempt: return "You went, but didn't top out."
         }
     }
 

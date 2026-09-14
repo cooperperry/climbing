@@ -71,10 +71,10 @@ struct WatchSessionView: View {
     }
 
     private var glanceHeader: some View {
-        HStack(alignment: .lastTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
                 Text(bpmText)
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
+                    .font(.system(size: 40, weight: .bold, design: .rounded))
                     .foregroundStyle(.red)
                     .monospacedDigit()
                     .minimumScaleFactor(0.6)
@@ -82,18 +82,18 @@ struct WatchSessionView: View {
                 Text("BPM")
                     .font(.caption2.bold())
                     .foregroundStyle(.red.opacity(0.85))
+                Spacer(minLength: 4)
+                restOrTimer
             }
-            Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 2) {
+            HStack(alignment: .lastTextBaseline, spacing: 6) {
                 Text(store.selectedGrade ?? "—")
                     .font(.title2.bold())
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                restOrTimer
-                Button(store.selectedStyle.displayName, action: store.cycleStyle)
+                Text("Crown")
                     .font(.caption2)
-                    .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
+                Spacer()
             }
         }
         .accessibilityHint("Turn the Digital Crown to change grade")
@@ -141,9 +141,12 @@ struct WatchSessionView: View {
             Button {
                 store.log(outcome: .flash)
             } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "bolt.fill")
-                    Text("Flash").font(.headline)
+                VStack(spacing: 1) {
+                    Image(systemName: ClimbOutcome.flash.symbolName)
+                    Text(ClimbOutcome.flash.displayName).font(.headline)
+                    Text(ClimbOutcome.flash.logSubtitle)
+                        .font(.caption2)
+                        .opacity(0.9)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -154,9 +157,12 @@ struct WatchSessionView: View {
             Button {
                 store.log(outcome: .send)
             } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "checkmark")
-                    Text("Send").font(.headline)
+                VStack(spacing: 1) {
+                    Image(systemName: ClimbOutcome.send.symbolName)
+                    Text(ClimbOutcome.send.displayName).font(.headline)
+                    Text(ClimbOutcome.send.logSubtitle)
+                        .font(.caption2)
+                        .opacity(0.9)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -169,8 +175,10 @@ struct WatchSessionView: View {
 
     private var secondaryRow: some View {
         HStack {
-            Button("Miss") { store.log(outcome: .attempt) }
+            Button("Didn't send") { store.log(outcome: .attempt) }
                 .font(.caption)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .disabled(store.selectedGrade == nil)
             Spacer()
             if store.snapshot.logs.first != nil {

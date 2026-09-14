@@ -122,7 +122,10 @@ struct StatsView: View {
 
     private var styleInsight: StyleInsight {
         StyleWeakSpotMath.insight(
-            logs: logs.map { StyleLog(style: $0.style, outcome: $0.outcome, loggedAt: $0.loggedAt) },
+            logs: logs.compactMap { log in
+                guard let style = log.style else { return nil }
+                return StyleLog(style: style, outcome: log.outcome, loggedAt: log.loggedAt)
+            },
             now: Date()
         )
     }
@@ -163,11 +166,11 @@ struct StatsView: View {
                             .tint(spot.style == styleInsight.weakest?.style ? .stravaOrange : .green)
                     }
                 }
-                Text("Send rate on 3+ goes of a style")
+                Text("Send rate on tagged holds — skip tagging if you don't care")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Log 3 or more goes of the same style to see where you send — and where you stall.")
+                Text("After a go, you can tag holds and wall (a climb can be both crimpy and overhanging). Tag 3+ of the same hold type to see send rate.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
