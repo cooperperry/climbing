@@ -51,7 +51,9 @@ final class EffortTraceTests: XCTestCase {
         }
         let sampled = EffortMath.downsample(frames, interval: 0.2)
         XCTAssertEqual(sampled.count, 5)
-        XCTAssertEqual(sampled.map(\.timestamp), [0, 0.2, 0.4, 0.6, 0.8])
+        zip(sampled.map(\.timestamp), [0.0, 0.2, 0.4, 0.6, 0.8]).forEach { actual, expected in
+            XCTAssertEqual(actual, expected, accuracy: 0.0001)
+        }
     }
 
     func testNearestHeartRateRespectsMaxGap() {

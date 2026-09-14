@@ -41,15 +41,10 @@ targets:
     platform: watchOS
     deploymentTarget: "10.0"
     sources:
-      - path: ClimbingWatch
-      - path: Climbing/Domain
-    info:
-      properties:
-        WKApplication: true
-        WKCompanionAppBundleIdentifier: com.cooperperry.climbing
-        WKBackgroundModes:
-          - workout
+      - ClimbingWatch
+      - Climbing/Domain
     entitlements:
+      path: ClimbingWatch/ClimbingWatch.entitlements
       properties:
         com.apple.developer.healthkit: true
     dependencies:
@@ -60,6 +55,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbing.watchkitapp
         GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "4"
+        INFOPLIST_KEY_WKApplication: YES
+        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: com.cooperperry.climbing
         INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads heart rate during a session to overlay on your send traces."
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: "Climbing starts a Watch workout so wrist motion can be recorded for send traces."
 

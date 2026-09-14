@@ -71,7 +71,11 @@ final class HealthManager {
         let config = HKWorkoutConfiguration()
         config.activityType = .climbing
         config.locationType = .indoor
-        try? await store.startWatchApp(with: config)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            store.startWatchApp(with: config) { _, _ in
+                continuation.resume()
+            }
+        }
     }
 
     private func activeEnergy(start: Date, end: Date) async -> Double {

@@ -66,7 +66,7 @@ final class WorkoutMotionManager: NSObject, WCSessionDelegate, HKWorkoutSessionD
     }
 
     private func authorize() async {
-        var toShare: Set<HKSampleType> = [HKObjectType.workoutType()]
+        let toShare: Set<HKSampleType> = [HKObjectType.workoutType()]
         var toRead = Set<HKObjectType>()
         if let heart = HKObjectType.quantityType(forIdentifier: .heartRate) {
             toRead.insert(heart)
@@ -99,9 +99,8 @@ final class WorkoutMotionManager: NSObject, WCSessionDelegate, HKWorkoutSessionD
     }
 
     private func finishWorkout() async {
-        let end = Date()
-        workout?.end(end)
-        try? await builder?.endCollection(at: end)
+        workout?.end()
+        try? await builder?.endCollection(at: Date())
         _ = try? await builder?.finishWorkout()
         workout = nil
         builder = nil
