@@ -54,4 +54,14 @@ final class GradeScaleTemplateTests: XCTestCase {
         let decoded = try JSONDecoder().decode(GradeScaleTemplate.self, from: data)
         XCTAssertEqual(original, decoded)
     }
+
+    func testStandardYDSOrdersRopeGrades() {
+        let scale = GradeScaleTemplate.standardYDS()
+        XCTAssertEqual(scale.kind, .yds)
+        XCTAssertEqual(scale.easiest, "5.5")
+        XCTAssertEqual(scale.hardest, "5.13d")
+        XCTAssertTrue(scale.isHarder("5.10a", than: "5.9"))
+        XCTAssertTrue(scale.isHarder("5.12a", than: "5.10d"))
+        XCTAssertFalse(scale.isHarder("5.11a", than: "5.11a"))
+    }
 }

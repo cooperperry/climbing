@@ -128,7 +128,23 @@ final class ClimbingModelTests: XCTestCase {
         context.insert(log)
         XCTAssertNil(log.style)
         XCTAssertNil(log.angle)
+        XCTAssertNil(log.discipline)
+        XCTAssertEqual(log.resolvedDiscipline, .boulder)
         XCTAssertEqual(log.wallAngle, .vertical)
+    }
+
+    func testDisciplinePersistsForRopeSends() throws {
+        let context = try makeContext()
+        let log = ClimbLog(
+            gradeLabel: "5.10a",
+            outcome: .send,
+            discipline: .lead
+        )
+        context.insert(log)
+        try context.save()
+        let fetched = try XCTUnwrap(try context.fetch(FetchDescriptor<ClimbLog>()).first)
+        XCTAssertEqual(fetched.discipline, .lead)
+        XCTAssertEqual(fetched.resolvedDiscipline, .lead)
     }
 
     func testWallAngleFallsBackForLegacyNil() throws {

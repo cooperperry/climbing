@@ -27,7 +27,7 @@ struct ActivityFeedView: View {
                     ContentUnavailableView {
                         Label("Climber", systemImage: "figure.climbing")
                     } description: {
-                        Text("Start a climb on Apple Watch. Heart rate, calories, and gain show up here live.")
+                        Text("Watch workouts show up here. Log tops on the Routes tab — no Watch needed.")
                     }
                 } else {
                     ScrollView {

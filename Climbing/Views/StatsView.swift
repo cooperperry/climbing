@@ -49,7 +49,7 @@ struct StatsView: View {
         ContentUnavailableView {
             Label("No Stats Yet", systemImage: "chart.bar")
         } description: {
-            Text("Log climbs in a session and your progress will show up here.")
+            Text("Log a top on the Routes tab. A Watch is optional.")
         }
     }
 
@@ -91,15 +91,27 @@ struct StatsView: View {
     // MARK: - Stat grid
 
     private var statGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            statCard(value: "\(logs.count)", label: "Climbs", systemImage: "figure.climbing")
-            statCard(value: "\(sends.count)", label: "Sends", systemImage: "checkmark.circle.fill")
-            statCard(value: "\(flashes)", label: "Flashes", systemImage: "bolt.fill")
-            statCard(
-                value: hardestSend?.gradeLabel ?? "—",
-                label: "Hardest Send",
-                systemImage: "trophy.fill"
-            )
+        VStack(spacing: 12) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                statCard(value: "\(logs.count)", label: "Climbs", systemImage: "figure.climbing")
+                statCard(value: "\(sends.count)", label: "Sends", systemImage: "checkmark.circle.fill")
+                statCard(value: "\(flashes)", label: "Flashes", systemImage: "bolt.fill")
+                statCard(
+                    value: hardestSend?.gradeLabel ?? "—",
+                    label: "Hardest Send",
+                    systemImage: "trophy.fill"
+                )
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                ForEach(ClimbDiscipline.allCases) { item in
+                    statCard(
+                        value: "\(sends.filter { $0.resolvedDiscipline == item }.count)",
+                        label: item.displayName,
+                        systemImage: item.symbolName
+                    )
+                }
+            }
         }
     }
 

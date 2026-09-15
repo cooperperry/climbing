@@ -33,9 +33,16 @@ final class ClimbLog {
     /// non-optional value that treats legacy `nil` as `.vertical`.
     var angle: ClimbAngle?
 
+    /// Bouldering, top rope, or lead. Optional so logs from before disciplines
+    /// existed migrate as `nil` (treated as bouldering in the UI).
+    var discipline: ClimbDiscipline?
+
     /// Wall angle when tagged; untagged / legacy `nil` is not assumed to be vertical
     /// in the UI. This fallback is only for call sites that still need a value.
     var wallAngle: ClimbAngle { angle ?? .vertical }
+
+    /// Discipline for display; untagged / legacy logs count as bouldering.
+    var resolvedDiscipline: ClimbDiscipline { discipline ?? .boulder }
 
     var loggedAt: Date
 
@@ -64,6 +71,7 @@ final class ClimbLog {
         outcome: ClimbOutcome,
         style: ClimbStyle? = nil,
         angle: ClimbAngle? = nil,
+        discipline: ClimbDiscipline? = nil,
         session: ClimbingSession? = nil,
         gradeScale: CustomGradeScale? = nil,
         loggedAt: Date = .now
@@ -73,6 +81,7 @@ final class ClimbLog {
         self.outcome = outcome
         self.style = style
         self.angle = angle
+        self.discipline = discipline
         self.session = session
         self.gradeScale = gradeScale
         self.loggedAt = loggedAt

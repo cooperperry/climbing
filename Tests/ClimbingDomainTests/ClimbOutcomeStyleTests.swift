@@ -68,3 +68,23 @@ final class ClimbOutcomeStyleTests: XCTestCase {
         XCTAssertEqual(ClimbOutcome.attempt.logSubtitle, "Fell / no top")
     }
 }
+
+final class ClimbDisciplineTests: XCTestCase {
+    func testDisplayNamesArePlainLanguage() {
+        XCTAssertEqual(ClimbDiscipline.boulder.displayName, "Bouldering")
+        XCTAssertEqual(ClimbDiscipline.topRope.displayName, "Top rope")
+        XCTAssertEqual(ClimbDiscipline.lead.displayName, "Lead")
+    }
+
+    func testOnlyBoulderUsesVScale() {
+        XCTAssertFalse(ClimbDiscipline.boulder.usesRopeGrades)
+        XCTAssertTrue(ClimbDiscipline.topRope.usesRopeGrades)
+        XCTAssertTrue(ClimbDiscipline.lead.usesRopeGrades)
+    }
+
+    func testRoundTripsThroughRawValue() {
+        for discipline in ClimbDiscipline.allCases {
+            XCTAssertEqual(ClimbDiscipline(rawValue: discipline.rawValue), discipline)
+        }
+    }
+}

@@ -4,6 +4,8 @@ import Foundation
 public enum GradeScaleKind: String, CaseIterable, Codable, Identifiable, Sendable {
     /// The standard bouldering V-scale (Vermin).
     case boulderVScale
+    /// Yosemite Decimal System, used for top rope and lead.
+    case yds
     /// A gym's color-coded circuit (e.g. white → black).
     case gymColorCircuit
     /// A fully user-defined scale.
@@ -14,6 +16,7 @@ public enum GradeScaleKind: String, CaseIterable, Codable, Identifiable, Sendabl
     public var displayName: String {
         switch self {
         case .boulderVScale: return "V-Scale"
+        case .yds: return "YDS"
         case .gymColorCircuit: return "Gym Circuit"
         case .custom: return "Custom"
         }
@@ -57,6 +60,17 @@ public struct GradeScaleTemplate: Equatable, Codable, Sendable {
         var grades = ["VB"]
         grades.append(contentsOf: (0...17).map { "V\($0)" })
         return GradeScaleTemplate(name: "V-Scale", kind: .boulderVScale, grades: grades)
+    }
+
+    /// Common gym YDS: 5.5–5.9, then 5.10a–5.13d.
+    public static func standardYDS() -> GradeScaleTemplate {
+        var grades = ["5.5", "5.6", "5.7", "5.8", "5.9"]
+        for number in 10...13 {
+            for letter in ["a", "b", "c", "d"] {
+                grades.append("5.\(number)\(letter)")
+            }
+        }
+        return GradeScaleTemplate(name: "YDS", kind: .yds, grades: grades)
     }
 
     /// A gym color circuit ordered from easiest to hardest.
