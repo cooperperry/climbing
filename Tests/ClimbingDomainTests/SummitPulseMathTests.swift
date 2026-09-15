@@ -75,6 +75,27 @@ final class ElevationMathTests: XCTestCase {
         XCTAssertTrue(text.contains("FT"))
         XCTAssertTrue(text.contains("1"))
     }
+
+    func testSpeedFormatUsesFeetPerMinute() {
+        XCTAssertEqual(ElevationFormat.speed(metersPerMinute: 3.048), "10 FT/M")
+        XCTAssertEqual(ElevationFormat.speed(metersPerMinute: 10, useFeet: false), "10 M/MIN")
+    }
+}
+
+final class ClimbSessionPayloadTests: XCTestCase {
+    func testLiveAveragePeakAndSparkline() {
+        let samples = (0..<100).map { HeartRateSample(timestamp: Double($0), bpm: Double(80 + $0)) }
+        let payload = ClimbSessionPayload(
+            startDate: Date(),
+            heartRateSeries: samples,
+            currentBPM: 179
+        )
+        XCTAssertTrue(payload.isLive)
+        XCTAssertEqual(payload.sparkline.count, 90)
+        XCTAssertEqual(payload.sparkline.first?.bpm, 90)
+        XCTAssertEqual(payload.peakBPM, 179)
+        XCTAssertEqual(payload.averageBPM, 130)
+    }
 }
 
 final class StrainMathTests: XCTestCase {

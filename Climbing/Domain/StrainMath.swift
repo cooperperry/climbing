@@ -37,6 +37,13 @@ public enum ClimbPhase: String, Equatable, Sendable, Codable {
     case climbing
     case resting
 
+    public var displayName: String {
+        switch self {
+        case .climbing: return "Climb"
+        case .resting: return "Rest"
+        }
+    }
+
     /// Compendium MET: climbing ~8–11, belay/rest ~2–3.
     public var met: Double {
         switch self {

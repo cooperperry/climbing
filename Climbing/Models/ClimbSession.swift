@@ -78,8 +78,26 @@ final class ClimbSession {
             cardiovascularStrain: cardiovascularStrain,
             climbingTime: climbingTime,
             restingTime: restingTime,
-            heartRateSeries: heartRateSeries
+            heartRateSeries: heartRateSeries,
+            currentBPM: heartRateSeries.last.map { Int($0.bpm.rounded()) },
+            phase: .resting,
+            elapsed: (endDate ?? Date()).timeIntervalSince(startDate)
         )
+    }
+
+    func apply(_ payload: ClimbSessionPayload) {
+        startDate = payload.startDate
+        endDate = payload.endDate
+        totalElevationGain = payload.totalElevationGain
+        maxAltitude = payload.maxAltitude
+        verticalSpeed = payload.verticalSpeed
+        activeCalories = payload.activeCalories
+        restingCalories = payload.restingCalories
+        bodyStressIndex = payload.bodyStressIndex
+        cardiovascularStrain = payload.cardiovascularStrain
+        climbingTime = payload.climbingTime
+        restingTime = payload.restingTime
+        heartRateSeries = payload.heartRateSeries
     }
 
     convenience init(payload: ClimbSessionPayload) {

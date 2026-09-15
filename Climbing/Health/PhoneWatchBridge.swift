@@ -13,11 +13,14 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
 
     let health = HealthManager()
     var liveBPM: Int?
+    var liveWorkout: ClimbSessionPayload?
+    var liveReceivedAt: Date?
     var selectedGrade: String?
     var selectedStyle: ClimbStyle = .crimp
     var restPlan: RestPlan?
 
     private var context: ModelContext?
+    private var lastLiveSave: Date?
     private var session: WCSession? {
         WCSession.isSupported() ? .default : nil
     }
@@ -42,6 +45,8 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
     func stopWatchSide() {
         send([WatchSync.kind: WatchSync.stop])
         liveBPM = nil
+        liveWorkout = nil
+        liveReceivedAt = nil
         restPlan = nil
         publishSnapshot()
     }
@@ -117,12 +122,12 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             replyHandler?([:])
             return
         }
-        guard let context, let kind else {
+        if kind == SummitSync.live || kind == SummitSync.workoutSummary {
+            ingestLiveOrSummary(message, finished: kind == SummitSync.workoutSummary)
             replyHandler?([:])
             return
         }
-        if kind == SummitSync.workoutSummary {
-            ingestWorkout(message, in: context)
+        guard let context, let kind else {
             replyHandler?([:])
             return
         }
@@ -146,12 +151,34 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         }
     }
 
-    private func ingestWorkout(_ message: [String: Any], in context: ModelContext) {
+    private func ingestLiveOrSummary(_ message: [String: Any], finished: Bool) {
         guard let data = message[SummitSync.payload] as? Data,
               let payload = try? JSONDecoder().decode(ClimbSessionPayload.self, from: data) else { return }
-        let existing = try? context.fetch(FetchDescriptor<ClimbSession>())
-        if existing?.contains(where: { $0.id == payload.id }) == true { return }
-        context.insert(ClimbSession(payload: payload))
+        liveBPM = payload.currentBPM
+        if payload.isLive && !finished {
+            liveWorkout = payload
+            liveReceivedAt = Date()
+            upsertSession(payload, throttle: true)
+        } else {
+            liveWorkout = nil
+            liveReceivedAt = nil
+            upsertSession(payload, throttle: false)
+        }
+    }
+
+    private func upsertSession(_ payload: ClimbSessionPayload, throttle: Bool) {
+        guard let context else { return }
+        if throttle {
+            let now = Date()
+            if let lastLiveSave, now.timeIntervalSince(lastLiveSave) < 2 { return }
+            lastLiveSave = now
+        }
+        let existing = (try? context.fetch(FetchDescriptor<ClimbSession>())) ?? []
+        if let match = existing.first(where: { $0.id == payload.id }) {
+            match.apply(payload)
+        } else {
+            context.insert(ClimbSession(payload: payload))
+        }
         try? context.save()
     }
 
@@ -357,5 +384,9 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         Task { @MainActor in self.handle(userInfo, replyHandler: nil) }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        Task { @MainActor in self.handle(applicationContext, replyHandler: nil) }
     }
 }

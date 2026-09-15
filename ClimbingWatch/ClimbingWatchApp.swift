@@ -9,6 +9,7 @@ struct ClimbingWatchApp: App {
     init() {
         _ = WatchStore.shared
         _ = WorkoutManager.shared
+        WorkoutManager.shared.prepare()
     }
 
     var body: some Scene {

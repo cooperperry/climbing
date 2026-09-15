@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// Apple Workout-style paged session. One metric family per page.
+/// Apple Workout-style paged session. Page 1 is the glance: HR, graph, calories, gain.
 struct WatchWorkoutView: View {
     @State private var manager = WorkoutManager.shared
     @State private var confirmEnd = false
 
     var body: some View {
-        if manager.isRunning || manager.isPaused {
+        if manager.isRunning || manager.isPaused || manager.isStarting {
             TabView {
                 WatchMetricsPage(manager: manager)
                 WatchLandmarkPage(manager: manager)
@@ -24,15 +24,24 @@ struct WatchWorkoutView: View {
                 Button("Keep Climbing", role: .cancel) {}
             }
         } else {
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 Text("SummitPulse")
                     .font(.headline)
-                Button("Start") {
-                    Task { await manager.start() }
+                Text("BPM, calories, and gain")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Button {
+                    manager.startFromButton()
+                } label: {
+                    Text(manager.isStarting ? "Starting…" : "Start")
+                        .frame(maxWidth: .infinity)
                 }
+                .controlSize(.large)
                 .tint(.green)
                 .buttonStyle(.borderedProminent)
+                .disabled(manager.isStarting)
             }
+            .padding(.horizontal, 8)
             .navigationTitle("Climb")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -45,55 +54,72 @@ struct WatchMetricsPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Spacer()
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(manager.isPaused ? "PAUSED" : SessionClock.format(manager.elapsed))
-                        .font(.caption.monospacedDigit())
+                        .font(.caption.bold().monospacedDigit())
                         .foregroundStyle(.yellow)
                 }
+                Spacer()
+                Text(manager.phase.displayName.uppercased())
+                    .font(.caption2.bold())
+                    .foregroundStyle(manager.phase == .climbing ? .green : .secondary)
+                Text(manager.currentZone.displayName)
+                    .font(.caption2.bold())
+                    .foregroundStyle(.orange)
             }
-            Text(ElevationFormat.gain(meters: manager.verticalGainMeters))
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
-            Spacer()
-            HStack(spacing: 10) {
-                zoneDot
+
+            HStack(alignment: .lastTextBaseline, spacing: 4) {
                 Text(manager.currentBPM.map(String.init) ?? "--")
-                    .font(.title2.bold().monospacedDigit())
+                    .font(.system(size: 40, weight: .bold, design: .rounded))
                     .foregroundStyle(.red)
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
                 Text("BPM")
                     .font(.caption2.bold())
                     .foregroundStyle(.red.opacity(0.85))
                 Spacer()
-                Text(manager.currentZone.displayName)
-                    .font(.caption.bold())
-                    .foregroundStyle(.orange)
+                if let avg = averageBPM {
+                    Text("avg \(avg)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+
+            BPMSparkline(samples: Array(manager.heartRates.suffix(90)))
+                .frame(height: 28)
+                .padding(.vertical, 2)
+
+            HStack(alignment: .top, spacing: 8) {
+                compactStat("\(Int(manager.activeCalories.rounded()))", "KCAL")
+                compactStat(ElevationFormat.gain(meters: manager.verticalGainMeters), "GAIN")
+                compactStat(ElevationFormat.speed(metersPerMinute: manager.verticalSpeedMPerMin), "SPEED")
             }
         }
-        .padding(.horizontal, 4)
-        .navigationTitle("Gain")
+        .padding(.horizontal, 2)
+        .navigationTitle("Now")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var zoneDot: some View {
-        Circle()
-            .fill(zoneColor)
-            .frame(width: 12, height: 12)
-            .overlay {
-                Circle()
-                    .stroke(.white.opacity(0.4), lineWidth: 2)
-            }
+    private var averageBPM: Int? {
+        let rates = manager.heartRates.map(\.bpm)
+        guard !rates.isEmpty else { return nil }
+        return Int((rates.reduce(0, +) / Double(rates.count)).rounded())
     }
 
-    private var zoneColor: Color {
-        switch manager.currentZone {
-        case .z1: return .blue
-        case .z2: return .green
-        case .z3: return .yellow
-        case .z4: return .orange
-        case .z5: return .red
+    private func compactStat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value)
+                .font(.caption.bold())
+                .monospacedDigit()
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -102,7 +128,8 @@ struct WatchLandmarkPage: View {
 
     var body: some View {
         let progress = manager.landmarkProgress
-        VStack(spacing: 8) {
+        let remainingFt = Int((progress.remainingMeters / 0.3048).rounded())
+        VStack(spacing: 6) {
             Gauge(value: progress.lapPercent) {
                 Text(progress.landmark.name)
                     .font(.caption2)
@@ -114,18 +141,28 @@ struct WatchLandmarkPage: View {
             }
             .gaugeStyle(.accessoryCircularCapacity)
             .tint(.green)
-            .frame(maxWidth: .infinity)
 
-            Text(String(format: "%.1f×", progress.completions))
+            Text("\(remainingFt) ft to go")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            VStack(spacing: 0) {
-                Text(String(format: "%.0f", manager.verticalSpeedMPerMin))
-                    .font(.title2.bold().monospacedDigit())
-                Text("M/MIN")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
+            HStack {
+                VStack {
+                    Text(ElevationFormat.gain(meters: manager.verticalGainMeters))
+                        .font(.caption.bold().monospacedDigit())
+                    Text("SESSION")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                VStack {
+                    Text(String(format: "%.1f×", progress.completions))
+                        .font(.caption.bold().monospacedDigit())
+                    Text("LAPS")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
             }
         }
         .navigationTitle("Landmark")
@@ -138,24 +175,21 @@ struct WatchStrainPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(Int(manager.activeCalories.rounded()))")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                Text("KCAL")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.orange)
+            HStack {
+                strainLine(
+                    SessionClock.format(manager.climbingTime),
+                    "CLIMB"
+                )
+                strainLine(
+                    SessionClock.format(manager.restingTime),
+                    "REST"
+                )
             }
-            Text("ACTIVE")
-                .font(.caption2.bold())
-                .foregroundStyle(.secondary)
-
-            Text("\(Int((manager.activeCalories + manager.restingCalories).rounded())) total")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
+            HStack {
+                strainLine(peakBPM.map(String.init) ?? "--", "PEAK")
+                strainLine(String(format: "%.0f", manager.cardiovascularStrain), "TRIMP")
+            }
+            Spacer(minLength: 4)
             HStack {
                 Text("STRESS")
                     .font(.caption2.bold())
@@ -170,6 +204,21 @@ struct WatchStrainPage: View {
         .padding(.horizontal, 4)
         .navigationTitle("Effort")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var peakBPM: Int? {
+        manager.heartRates.map(\.bpm).max().map { Int($0.rounded()) } ?? manager.currentBPM
+    }
+
+    private func strainLine(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value)
+                .font(.headline.monospacedDigit())
+            Text(label)
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

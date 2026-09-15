@@ -29,6 +29,8 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     var restingTime: TimeInterval = 0
     var heartRates: [HeartRateSample] = []
     var sessionID = UUID()
+    var isStarting = false
+    var phase: ClimbPhase = .resting
 
     var landmarkProgress: LandmarkProgress {
         LandmarkMath.progress(
@@ -55,23 +57,43 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     private var hrvSDNN: Double?
     private var maxHR = StrainMath.defaultMaxHR
     private var weightKg = StrainMath.defaultWeightKg
-    private var lastPhase: ClimbPhase = .resting
+    private var lastLiveSent: Date?
 
     private override init() {
         super.init()
     }
 
-    func start(configuration: HKWorkoutConfiguration = .indoorClimbing) async {
-        await authorize()
-        await finishWorkout()
-        resetLiveState()
+    func prepare() {
+        Task { await authorize() }
+    }
+
+    func startFromButton() {
+        guard !isRunning, !isStarting else { return }
+        isStarting = true
+        isRunning = true
+        Task { await start(skipGuard: true) }
+    }
+
+    func start(configuration: HKWorkoutConfiguration = .indoorClimbing, skipGuard: Bool = false) async {
+        if !skipGuard {
+            guard !isRunning, !isStarting else { return }
+            isStarting = true
+            isRunning = true
+        }
+        isPaused = false
+        isLocked = false
         sessionID = UUID()
         let now = Date()
         startDate = now
         lastTick = now
+        resetLiveState()
+        startTicker()
+        broadcastLive()
+        await authorize()
+        if workout != nil {
+            await finishWorkout()
+        }
         isRunning = true
-        isPaused = false
-        isLocked = false
         loadProfile()
         startAltimeter()
         startMotion()
@@ -83,12 +105,14 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             live.delegate = self
             workout = session
             builder = live
+            session.prepare()
             session.startActivity(with: now)
             try await live.beginCollection(at: now)
         } catch {
             currentBPM = nil
         }
-        startTicker()
+        isStarting = false
+        broadcastLive()
     }
 
     func pause() {
@@ -125,16 +149,19 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         }
         recompute(now: endDate)
         let payload = snapshot(endDate: endDate)
+        isStarting = false
+        lastLiveSent = nil
+        send(payload, kind: SummitSync.live)
         await finishWorkout()
         stopSensors()
         isRunning = false
         isPaused = false
         isLocked = false
         startDate = nil
-        send(payload)
+        send(payload, kind: SummitSync.workoutSummary)
     }
 
-    func snapshot(endDate: Date? = nil) -> ClimbSessionPayload {
+    func snapshot(endDate: Date? = nil, live: Bool = false) -> ClimbSessionPayload {
         ClimbSessionPayload(
             id: sessionID,
             startDate: startDate ?? Date(),
@@ -148,7 +175,11 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             cardiovascularStrain: cardiovascularStrain,
             climbingTime: climbingTime,
             restingTime: restingTime,
-            heartRateSeries: heartRates
+            heartRateSeries: live ? Array(heartRates.suffix(90)) : heartRates,
+            currentBPM: currentBPM,
+            phase: phase,
+            elapsed: elapsed,
+            isPaused: isPaused
         )
     }
 
@@ -212,12 +243,12 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         elapsed = max(0, now.timeIntervalSince(startDate) - pausedAccumulated)
         let dt = now.timeIntervalSince(lastTick)
         self.lastTick = now
-        let phase = StrainMath.phase(
+        let detected = StrainMath.phase(
             verticalSpeedMPerMin: verticalSpeedMPerMin,
             motionVariance: motionVariance
         )
-        lastPhase = phase
-        if phase == .climbing {
+        phase = detected
+        if detected == .climbing {
             climbingTime += dt
         } else {
             restingTime += dt
@@ -243,6 +274,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             restingCalories = StrainMath.calories(met: ClimbPhase.resting.met, weightKg: weightKg, seconds: restingTime)
         }
         refreshEnergyFromBuilder()
+        broadcastLive()
     }
 
     private func refreshEnergyFromBuilder() {
@@ -271,6 +303,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         heartRates.append(HeartRateSample(timestamp: now.timeIntervalSince1970, bpm: bpm))
         lastHRAt = now
         refreshEnergyFromBuilder()
+        broadcastLive()
     }
 
     private func resetLiveState() {
@@ -296,7 +329,8 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         motionMagnitudes = []
         motionVariance = 0
         hrvSDNN = nil
-        lastPhase = .resting
+        lastLiveSent = nil
+        phase = .resting
     }
 
     // MARK: - HealthKit
@@ -367,19 +401,32 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         builder = nil
     }
 
-    private func send(_ payload: ClimbSessionPayload) {
+    private func broadcastLive() {
+        let now = Date()
+        if let lastLiveSent, now.timeIntervalSince(lastLiveSent) < 1 { return }
+        lastLiveSent = now
+        send(snapshot(live: true), kind: SummitSync.live)
+    }
+
+    private func send(_ payload: ClimbSessionPayload, kind: String) {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         guard let data = try? JSONEncoder().encode(payload) else { return }
         let message: [String: Any] = [
-            SummitSync.kind: SummitSync.workoutSummary,
+            SummitSync.kind: kind,
             SummitSync.payload: data,
         ]
-        if session.activationState == .activated, session.isReachable {
+        if kind == SummitSync.live {
+            try? session.updateApplicationContext(message)
+        }
+        guard session.activationState == .activated else { return }
+        if session.isReachable {
             session.sendMessage(message, replyHandler: { _ in }, errorHandler: { _ in
-                session.transferUserInfo(message)
+                if kind != SummitSync.live {
+                    session.transferUserInfo(message)
+                }
             })
-        } else {
+        } else if kind != SummitSync.live {
             session.transferUserInfo(message)
         }
     }
@@ -405,9 +452,9 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
                 self.isPaused = false
                 self.isRunning = true
             }
-            if toState == .ended {
-                self.isRunning = false
-            }
+            // Do not clear `isRunning` on `.ended`. A leftover or failed
+            // HealthKit session can emit `.ended` after Start, which used
+            // to bounce the UI back to the Start button. `end()` owns stop.
         }
     }
 

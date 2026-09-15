@@ -16,6 +16,10 @@ public struct ClimbSessionPayload: Equatable, Sendable, Codable {
     public var climbingTime: TimeInterval
     public var restingTime: TimeInterval
     public var heartRateSeries: [HeartRateSample]
+    public var currentBPM: Int?
+    public var phase: ClimbPhase
+    public var elapsed: TimeInterval
+    public var isPaused: Bool
 
     public init(
         id: UUID = UUID(),
@@ -30,7 +34,11 @@ public struct ClimbSessionPayload: Equatable, Sendable, Codable {
         cardiovascularStrain: Double = 0,
         climbingTime: TimeInterval = 0,
         restingTime: TimeInterval = 0,
-        heartRateSeries: [HeartRateSample] = []
+        heartRateSeries: [HeartRateSample] = [],
+        currentBPM: Int? = nil,
+        phase: ClimbPhase = .resting,
+        elapsed: TimeInterval = 0,
+        isPaused: Bool = false
     ) {
         self.id = id
         self.startDate = startDate
@@ -45,11 +53,31 @@ public struct ClimbSessionPayload: Equatable, Sendable, Codable {
         self.climbingTime = climbingTime
         self.restingTime = restingTime
         self.heartRateSeries = heartRateSeries
+        self.currentBPM = currentBPM
+        self.phase = phase
+        self.elapsed = elapsed
+        self.isPaused = isPaused
     }
 
     public var climbRestRatio: Double {
         let rest = max(restingTime, 1)
         return climbingTime / rest
+    }
+
+    public var isLive: Bool { endDate == nil }
+
+    public var averageBPM: Int? {
+        let rates = heartRateSeries.map(\.bpm)
+        guard !rates.isEmpty else { return currentBPM }
+        return Int((rates.reduce(0, +) / Double(rates.count)).rounded())
+    }
+
+    public var sparkline: [HeartRateSample] {
+        Array(heartRateSeries.suffix(90))
+    }
+
+    public var peakBPM: Int? {
+        heartRateSeries.map(\.bpm).max().map { Int($0.rounded()) } ?? currentBPM
     }
 
     public var sessionTitle: String {

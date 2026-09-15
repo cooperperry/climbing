@@ -64,6 +64,13 @@ public enum ElevationFormat {
         return "+\(formatted) \(useFeet ? "FT" : "M")"
     }
 
+    /// Rolling vertical speed, e.g. `10 FT/M`.
+    public static func speed(metersPerMinute: Double, useFeet: Bool = true) -> String {
+        let value = useFeet ? metersPerMinute / 0.3048 : metersPerMinute
+        let n = Int(value.rounded())
+        return "\(n) \(useFeet ? "FT/M" : "M/MIN")"
+    }
+
     private static let grouped: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
