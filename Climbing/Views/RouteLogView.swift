@@ -158,38 +158,35 @@ struct RouteLogView: View {
 
     @ViewBuilder
     private var history: some View {
-        if logs.isEmpty {
-            ContentUnavailableView {
-                Label("No routes yet", systemImage: "checkmark.circle")
-            } description: {
-                Text("Log a top here. A Watch is optional — health workouts show up under Sessions.")
-            }
+        let start = Calendar.current.startOfDay(for: .now)
+        let today = logs.filter { $0.loggedAt >= start }
+        if today.isEmpty {
+            Text("Today's tops show here. Open Sessions to see other days.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Logged")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Today")
                     .font(.headline)
-                ForEach(logs.prefix(40)) { entry in
-                    HStack(spacing: 10) {
-                        Image(systemName: entry.outcome.symbolName)
-                            .foregroundStyle(entry.outcome.isCompletion ? .green : .orange)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.gradeLabel)
-                                .font(.subheadline.bold())
-                            Text(entry.resolvedDiscipline.displayName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(entry.outcome.displayName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(entry.loggedAt, format: .dateTime.month().day())
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                ForEach(ClimbDiscipline.allCases) { item in
+                    let rows = today.filter { $0.resolvedDiscipline == item }
+                    if !rows.isEmpty {
+                        Text(item.displayName)
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        ForEach(rows) { entry in
+                            HStack(spacing: 10) {
+                                Image(systemName: entry.outcome.symbolName)
+                                    .foregroundStyle(entry.outcome.isCompletion ? .green : .orange)
+                                Text(entry.gradeLabel).bold()
+                                Spacer()
+                                Text(entry.outcome.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    .padding(.vertical, 4)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

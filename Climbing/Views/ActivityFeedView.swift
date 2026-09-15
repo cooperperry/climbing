@@ -1,53 +1,212 @@
 import SwiftUI
 import SwiftData
 
-/// Strava-style feed of SummitPulse sessions, including a live Watch mirror.
+/// Journal of gym days: the routes you topped, plus Watch health for that day.
 struct ActivityFeedView: View {
     @Query(sort: \ClimbSession.startDate, order: .reverse)
-    private var sessions: [ClimbSession]
+    private var workouts: [ClimbSession]
+    @Query(sort: \ClimbLog.loggedAt, order: .reverse)
+    private var logs: [ClimbLog]
     @State private var bridge = PhoneWatchBridge.shared
+    @State private var filter: DayFilter = .all
 
     private var live: ClimbSessionPayload? {
         if let payload = bridge.liveWorkout, payload.isLive { return payload }
-        return sessions.first(where: \.isActive)?.payload
+        return workouts.first(where: \.isActive)?.payload
     }
 
-    private var completed: [ClimbSession] {
-        sessions.filter { $0.endDate != nil }
+    private var days: [GymDay] {
+        GymDayMath.group(
+            climbs: logs.map {
+                DayClimb(
+                    loggedAt: $0.loggedAt,
+                    gradeLabel: $0.gradeLabel,
+                    outcome: $0.outcome,
+                    discipline: $0.resolvedDiscipline
+                )
+            },
+            workouts: workouts.filter { $0.endDate != nil }.map { workout in
+                let payload = workout.payload
+                return DayHealth(
+                    startDate: workout.startDate,
+                    calories: workout.activeCalories,
+                    gainMeters: workout.totalElevationGain,
+                    peakBPM: payload.peakBPM,
+                    averageBPM: payload.averageBPM,
+                    bodyStress: workout.bodyStressIndex,
+                    duration: workout.endDate.map { $0.timeIntervalSince(workout.startDate) } ?? payload.elapsed,
+                    heartRates: workout.heartRateSeries
+                )
+            }
+        )
+    }
+
+    private var visibleDays: [GymDay] {
+        switch filter {
+        case .all:
+            return days
+        case .day(let start):
+            return days.filter { $0.dayStart == start }
+        }
     }
 
     private var lifetimeGain: Double {
-        completed.reduce(0) { $0 + $1.totalElevationGain } + (live?.totalElevationGain ?? 0)
+        workouts.reduce(0) { $0 + $1.totalElevationGain }
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if live == nil && sessions.isEmpty {
+                if live == nil && days.isEmpty {
                     ContentUnavailableView {
-                        Label("Climber", systemImage: "figure.climbing")
+                        Label("No sessions yet", systemImage: "calendar")
                     } description: {
-                        Text("Watch workouts show up here. Log tops on the Routes tab — no Watch needed.")
+                        Text("Log a top on Routes, or start a climb on Watch. Each day keeps those together.")
                     }
                 } else {
                     ScrollView {
                         VStack(spacing: 16) {
                             if let live {
                                 liveNowCard(live)
-                            } else if let latest = completed.first {
-                                sessionHeader(latest.payload, date: latest.startDate)
-                                heroGrid(latest.payload)
                             }
-                            milestoneCarousel
-                            ForEach(completed.prefix(20)) { session in
-                                sessionRow(session)
+                            ForEach(visibleDays) { day in
+                                dayCard(day, expanded: filter != .all || visibleDays.count == 1)
+                            }
+                            if filter == .all {
+                                milestoneCarousel
                             }
                         }
                         .padding()
                     }
                 }
             }
-            .navigationTitle("Activity")
+            .navigationTitle("Sessions")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    dayMenu
+                }
+            }
+        }
+    }
+
+    private var dayMenu: some View {
+        Menu {
+            Button("All days") { filter = .all }
+            ForEach(days) { day in
+                Button(day.dayStart.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())) {
+                    filter = .day(day.dayStart)
+                }
+            }
+        } label: {
+            Label(filterLabel, systemImage: "calendar")
+        }
+        .disabled(days.isEmpty)
+    }
+
+    private var filterLabel: String {
+        switch filter {
+        case .all:
+            return "All days"
+        case .day(let start):
+            return start.formatted(.dateTime.month(.abbreviated).day())
+        }
+    }
+
+    private func dayCard(_ day: GymDay, expanded: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button {
+                filter = .day(day.dayStart)
+            } label: {
+                HStack {
+                    Text(day.dayStart, format: .dateTime.weekday(.wide).month().day())
+                        .font(.title3.bold())
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    if filter == .all {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(expanded && filter != .all)
+
+            ForEach(ClimbDiscipline.allCases) { discipline in
+                let tops = day.tops(in: discipline)
+                if !tops.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(discipline.displayName)
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        if expanded {
+                            ForEach(tops) { climb in
+                                HStack {
+                                    Text(climb.gradeLabel)
+                                        .font(.headline)
+                                    Text(climb.outcome.displayName)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                }
+                            }
+                        } else {
+                            Text(tops.map(\.gradeLabel).joined(separator: "  ·  "))
+                                .font(.headline)
+                        }
+                    }
+                }
+            }
+
+            if day.tops.isEmpty && day.health == nil && !day.climbs.isEmpty {
+                Text("Still working — no tops yet")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let health = day.health {
+                healthBlock(health, expanded: expanded)
+            } else if expanded {
+                Text("No Watch workout this day")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func healthBlock(_ health: DayHealth, expanded: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Health")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            HStack(spacing: 16) {
+                metric("\(Int(health.calories.rounded()))", "kcal")
+                metric(ElevationFormat.gain(meters: health.gainMeters), "gain")
+                if let peak = health.peakBPM {
+                    metric("\(peak)", "peak BPM")
+                }
+                metric(String(format: "%.1f", health.bodyStress), "stress")
+            }
+            if expanded, health.heartRates.count >= 2 {
+                PhoneBPMSparkline(samples: Array(health.heartRates.suffix(90)))
+                    .frame(height: 56)
+            }
+        }
+    }
+
+    private func metric(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.subheadline.bold())
+                .monospacedDigit()
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+            Text(label.uppercased())
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -63,9 +222,6 @@ struct ActivityFeedView: View {
                 Text(payload.phase == .climbing ? "Climbing" : "Resting")
                     .font(.caption.bold())
                     .foregroundStyle(payload.phase == .climbing ? .green : .secondary)
-                Text(payload.heartRateZone.readout)
-                    .font(.caption.bold())
-                    .foregroundStyle(.orange)
                 Spacer()
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(payload.isPaused ? "PAUSED" : SessionClock.format(liveElapsed(payload)))
@@ -74,56 +230,29 @@ struct ActivityFeedView: View {
                 }
             }
 
-            sessionHeader(payload, date: payload.startDate)
-
             HStack(alignment: .lastTextBaseline, spacing: 6) {
                 Text(payload.currentBPM.map(String.init) ?? "--")
-                    .font(.system(size: 56, weight: .bold, design: .rounded))
+                    .font(.system(size: 44, weight: .bold, design: .rounded))
                     .foregroundStyle(.red)
                     .monospacedDigit()
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
                 Text("BPM")
                     .font(.headline.bold())
                     .foregroundStyle(.red.opacity(0.85))
                 Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    if let avg = payload.averageBPM {
-                        Text("avg \(avg)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    if let peak = payload.peakBPM {
-                        Text("peak \(peak)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
             }
 
             PhoneBPMSparkline(samples: payload.sparkline)
-                .frame(height: 72)
+                .frame(height: 56)
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                heroCard(
-                    value: "\(Int(payload.activeCalories.rounded()))",
-                    label: "Active kcal"
-                )
-                heroCard(
-                    value: ElevationFormat.gain(meters: payload.totalElevationGain),
-                    label: "Vertical gain"
-                )
-                heroCard(
-                    value: ElevationFormat.speed(metersPerMinute: payload.verticalSpeed),
-                    label: "Vertical speed"
-                )
-                heroCard(
-                    value: String(format: "%.1f", payload.bodyStressIndex),
-                    label: "Body stress",
-                    badge: "0–10"
-                )
+            HStack(spacing: 16) {
+                metric("\(Int(payload.activeCalories.rounded()))", "kcal")
+                metric(ElevationFormat.gain(meters: payload.totalElevationGain), "gain")
+                metric(payload.heartRateZone.readout, "zone")
             }
         }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func liveElapsed(_ payload: ClimbSessionPayload) -> TimeInterval {
@@ -131,42 +260,6 @@ struct ActivityFeedView: View {
         let extra = bridge.liveReceivedAt.map { Date().timeIntervalSince($0) } ?? 0
         if payload.elapsed > 0 { return payload.elapsed + max(0, extra) }
         return max(0, Date().timeIntervalSince(payload.startDate))
-    }
-
-    private func sessionHeader(_ payload: ClimbSessionPayload, date: Date) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(payload.sessionTitle)
-                .font(.title.bold())
-            Text(date, format: .dateTime.weekday().month().day().hour().minute())
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func heroGrid(_ payload: ClimbSessionPayload) -> some View {
-        let target = LandmarkMath.sessionTarget(gainMeters: payload.totalElevationGain)
-        let progress = LandmarkMath.progress(gainMeters: payload.totalElevationGain, toward: target)
-        return LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            heroCard(
-                value: ElevationFormat.gain(meters: payload.totalElevationGain),
-                label: target.name,
-                badge: "\(Int((progress.lapPercent * 100).rounded()))%"
-            )
-            heroCard(
-                value: "\(Int(payload.activeCalories.rounded()))",
-                label: "Active kcal"
-            )
-            heroCard(
-                value: payload.peakBPM.map(String.init) ?? "--",
-                label: "Peak BPM"
-            )
-            heroCard(
-                value: String(format: "%.1f", payload.bodyStressIndex),
-                label: "Body stress",
-                badge: "0–10"
-            )
-        }
     }
 
     private var milestoneCarousel: some View {
@@ -195,43 +288,11 @@ struct ActivityFeedView: View {
             }
         }
     }
+}
 
-    private func sessionRow(_ session: ClimbSession) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.startDate, format: .dateTime.month().day())
-                    .font(.subheadline.bold())
-                Text(ElevationFormat.gain(meters: session.totalElevationGain))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text("\(Int(session.activeCalories.rounded())) kcal")
-                .font(.subheadline.monospacedDigit())
-        }
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func heroCard(value: String, label: String, badge: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let badge {
-                Text(badge)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.stravaOrange)
-            }
-            Text(value)
-                .font(.title2.bold())
-                .minimumScaleFactor(0.6)
-                .lineLimit(1)
-            Text(label.uppercased())
-                .font(.caption2.bold())
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
+private enum DayFilter: Hashable {
+    case all
+    case day(Date)
 }
 
 /// Phone-side BPM sparkline matching the Watch glance.
@@ -269,5 +330,8 @@ struct PhoneBPMSparkline: View {
 
 #Preview {
     ActivityFeedView()
-        .modelContainer(for: [ClimbSession.self], inMemory: true)
+        .modelContainer(
+            for: [ClimbSession.self, ClimbLog.self, ClimbingSession.self, CustomGradeScale.self],
+            inMemory: true
+        )
 }
