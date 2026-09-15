@@ -4,6 +4,11 @@ extension ShapeStyle where Self == Color {
     static var stravaOrange: Color {
         Color(red: 0.988, green: 0.298, blue: 0.008)
     }
+
+    /// Apple Workout lime, used on the pre-start screen.
+    static var workoutGreen: Color {
+        Color(red: 0.42, green: 0.92, blue: 0.22)
+    }
 }
 
 /// Compact BPM sparkline from heart-rate samples.

@@ -6,7 +6,7 @@ struct WatchWorkoutView: View {
     @State private var confirmEnd = false
 
     var body: some View {
-        if manager.isRunning || manager.isPaused || manager.isStarting {
+        if manager.isRunning || manager.isPaused {
             TabView {
                 WatchMetricsPage(manager: manager)
                 WatchLandmarkPage(manager: manager)
@@ -24,27 +24,75 @@ struct WatchWorkoutView: View {
                 Button("Keep Climbing", role: .cancel) {}
             }
         } else {
-            VStack(spacing: 10) {
-                Text("SummitPulse")
-                    .font(.headline)
-                Text("BPM, calories, and gain")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Button {
-                    manager.startFromButton()
-                } label: {
-                    Text(manager.isStarting ? "Starting…" : "Start")
-                        .frame(maxWidth: .infinity)
+            WatchStartPage(
+                isStarting: manager.isStarting,
+                onStart: { manager.startFromButton() }
+            )
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+}
+
+/// Idle screen modeled on Apple Workout: activity mark, name, round play.
+struct WatchStartPage: View {
+    var isStarting: Bool
+    var onStart: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.workoutGreen.opacity(0.75),
+                            Color.workoutGreen.opacity(0.18),
+                            .clear,
+                        ],
+                        center: .center,
+                        startRadius: 4,
+                        endRadius: 92
+                    )
+                )
+                .offset(y: -10)
+                .allowsHitTesting(false)
+
+            VStack(spacing: 0) {
+                Spacer(minLength: 4)
+                Image(systemName: "figure.climbing")
+                    .font(.system(size: 50, weight: .regular))
+                    .foregroundStyle(Color.workoutGreen)
+                    .symbolRenderingMode(.hierarchical)
+                    .accessibilityHidden(true)
+                Text("Climb")
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .padding(.top, 6)
+                Spacer()
+                Button(action: onStart) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.workoutGreen)
+                            .frame(width: 62, height: 62)
+                        if isStarting {
+                            ProgressView()
+                                .tint(.black)
+                        } else {
+                            Image(systemName: "play.fill")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(.black)
+                                .offset(x: 2)
+                        }
+                    }
                 }
-                .controlSize(.large)
-                .tint(.green)
-                .buttonStyle(.borderedProminent)
-                .disabled(manager.isStarting)
+                .buttonStyle(.plain)
+                .disabled(isStarting)
+                .accessibilityLabel(isStarting ? "Starting climb" : "Start climb")
+                .padding(.bottom, 2)
             }
             .padding(.horizontal, 8)
-            .navigationTitle("Climb")
-            .navigationBarTitleDisplayMode(.inline)
         }
+        .toolbar(.hidden, for: .navigationBar)
+        .containerBackground(Color.black, for: .navigation)
     }
 }
 

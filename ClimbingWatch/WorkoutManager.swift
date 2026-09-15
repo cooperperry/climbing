@@ -70,7 +70,6 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     func startFromButton() {
         guard !isRunning, !isStarting else { return }
         isStarting = true
-        isRunning = true
         Task { await start(skipGuard: true) }
     }
 

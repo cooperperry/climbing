@@ -25,7 +25,7 @@ struct ActivityFeedView: View {
             Group {
                 if live == nil && sessions.isEmpty {
                     ContentUnavailableView {
-                        Label("SummitPulse", systemImage: "mountain.2.fill")
+                        Label("Climber", systemImage: "figure.climbing")
                     } description: {
                         Text("Start a climb on Apple Watch. Heart rate, calories, and gain show up here live.")
                     }
