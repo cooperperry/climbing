@@ -60,9 +60,16 @@ struct WatchMetricsPage: View {
                         .foregroundStyle(.yellow)
                 }
                 Spacer()
-                Text(manager.phase == .climbing ? "Climbing" : "Resting")
-                    .font(.caption2.bold())
-                    .foregroundStyle(manager.phase == .climbing ? .green : .secondary)
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(manager.phase == .climbing ? "Climbing" : "Resting")
+                        .font(.caption2.bold())
+                        .foregroundStyle(manager.phase == .climbing ? .green : .secondary)
+                    Text(manager.currentZone.readout)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                }
             }
 
             HStack(alignment: .lastTextBaseline, spacing: 4) {
@@ -171,7 +178,7 @@ struct WatchStrainPage: View {
     var manager: WorkoutManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 strainLine(
                     SessionClock.format(manager.climbingTime),
@@ -182,11 +189,30 @@ struct WatchStrainPage: View {
                     "RESTING"
                 )
             }
-            strainLine(peakBPM.map { "\($0) BPM" } ?? "--", "PEAK HR")
-            Spacer(minLength: 0)
+            HStack {
+                strainLine(peakBPM.map { "\($0)" } ?? "--", "PEAK BPM")
+                strainLine(
+                    String(format: "%.0f", manager.cardiovascularStrain),
+                    "CARDIO WORK"
+                )
+            }
+            Spacer(minLength: 4)
+            HStack(alignment: .firstTextBaseline) {
+                Text("BODY STRESS")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+                Text("0–10")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "%.1f", manager.bodyStressIndex))
+                    .font(.title3.bold().monospacedDigit())
+            }
+            ProgressView(value: manager.bodyStressIndex, total: 10)
+                .tint(manager.bodyStressIndex >= 7 ? .red : .orange)
         }
         .padding(.horizontal, 4)
-        .navigationTitle("Time")
+        .navigationTitle("Effort")
         .navigationBarTitleDisplayMode(.inline)
     }
 

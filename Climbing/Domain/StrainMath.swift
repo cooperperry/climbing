@@ -19,7 +19,20 @@ public enum HeartRateZone: Int, CaseIterable, Sendable, Codable {
         }
     }
 
-    public var displayName: String { "Z\(rawValue)" }
+    public var displayName: String { "Zone \(rawValue)" }
+
+    /// Easy → Max, so "Zone 1" is not a mysterious code.
+    public var effortLabel: String {
+        switch self {
+        case .z1: return "Easy"
+        case .z2: return "Steady"
+        case .z3: return "Hard"
+        case .z4: return "Very hard"
+        case .z5: return "Max"
+        }
+    }
+
+    public var readout: String { "\(displayName) · \(effortLabel)" }
 
     public static func zone(bpm: Int, maxHR: Int) -> HeartRateZone {
         guard maxHR > 0 else { return .z1 }

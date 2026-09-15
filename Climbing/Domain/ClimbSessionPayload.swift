@@ -80,6 +80,13 @@ public struct ClimbSessionPayload: Equatable, Sendable, Codable {
         heartRateSeries.map(\.bpm).max().map { Int($0.rounded()) } ?? currentBPM
     }
 
+    public var heartRateZone: HeartRateZone {
+        HeartRateZone.zone(
+            bpm: currentBPM ?? peakBPM ?? 0,
+            maxHR: StrainMath.defaultMaxHR
+        )
+    }
+
     public var sessionTitle: String {
         let hour = Calendar.current.component(.hour, from: startDate)
         let timeOfDay: String

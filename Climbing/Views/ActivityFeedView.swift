@@ -63,6 +63,9 @@ struct ActivityFeedView: View {
                 Text(payload.phase == .climbing ? "Climbing" : "Resting")
                     .font(.caption.bold())
                     .foregroundStyle(payload.phase == .climbing ? .green : .secondary)
+                Text(payload.heartRateZone.readout)
+                    .font(.caption.bold())
+                    .foregroundStyle(.orange)
                 Spacer()
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Text(payload.isPaused ? "PAUSED" : SessionClock.format(liveElapsed(payload)))
@@ -112,11 +115,12 @@ struct ActivityFeedView: View {
                 )
                 heroCard(
                     value: ElevationFormat.speed(metersPerMinute: payload.verticalSpeed),
-                    label: "Vert speed"
+                    label: "Vertical speed"
                 )
                 heroCard(
-                    value: SessionClock.format(payload.climbingTime),
-                    label: "Time climbing"
+                    value: String(format: "%.1f", payload.bodyStressIndex),
+                    label: "Body stress",
+                    badge: "0–10"
                 )
             }
         }
@@ -158,8 +162,9 @@ struct ActivityFeedView: View {
                 label: "Peak BPM"
             )
             heroCard(
-                value: SessionClock.format(payload.climbingTime),
-                label: "Time climbing"
+                value: String(format: "%.1f", payload.bodyStressIndex),
+                label: "Body stress",
+                badge: "0–10"
             )
         }
     }

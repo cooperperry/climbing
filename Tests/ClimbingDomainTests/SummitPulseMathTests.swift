@@ -107,6 +107,12 @@ final class StrainMathTests: XCTestCase {
         XCTAssertEqual(HeartRateZone.zone(bpm: 190, maxHR: 200), .z5)
     }
 
+    func testZoneReadoutIsPlainLanguage() {
+        XCTAssertEqual(HeartRateZone.z1.readout, "Zone 1 · Easy")
+        XCTAssertEqual(HeartRateZone.z3.readout, "Zone 3 · Hard")
+        XCTAssertEqual(HeartRateZone.z5.readout, "Zone 5 · Max")
+    }
+
     func testEdwardsTRIMP() {
         let trimp = StrainMath.trimp(zoneSeconds: [.z1: 60, .z5: 60])
         XCTAssertEqual(trimp, 1 + 5, accuracy: 0.0001)
