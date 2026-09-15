@@ -31,10 +31,12 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbing
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: SummitPulse
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
-        INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads active energy and heart rate from Apple Health to show your effort during a session, and uses wrist motion from Apple Watch to build a send trace after you send or flash."
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "SummitPulse reads heart rate, HRV, and energy from Apple Health to measure climbing strain and calories."
+        INFOPLIST_KEY_NSMotionUsageDescription: "SummitPulse uses the barometer and wrist motion to measure vertical gain and climbing vs rest."
 
   ClimbingWatch:
     type: application
@@ -49,15 +51,18 @@ targets:
         com.apple.developer.healthkit: true
     dependencies:
       - sdk: HealthKit.framework
+      - sdk: CoreMotion.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cooperperry.climbing.watchkitapp
         GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "4"
+        INFOPLIST_KEY_CFBundleDisplayName: SummitPulse
         INFOPLIST_KEY_WKApplication: YES
         INFOPLIST_KEY_WKCompanionAppBundleIdentifier: com.cooperperry.climbing
-        INFOPLIST_KEY_NSHealthShareUsageDescription: "Climbing reads heart rate during a session to overlay on your send traces."
-        INFOPLIST_KEY_NSHealthUpdateUsageDescription: "Climbing starts a Watch workout so wrist motion can be recorded for send traces."
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "SummitPulse reads heart rate, HRV, and energy during a climb."
+        INFOPLIST_KEY_NSHealthUpdateUsageDescription: "SummitPulse starts a Watch workout to record elevation, heart rate, and calories."
+        INFOPLIST_KEY_NSMotionUsageDescription: "SummitPulse uses the barometer and wrist motion to measure vertical gain."
 
   ClimbingTests:
     type: bundle.unit-test

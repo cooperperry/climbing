@@ -121,6 +121,11 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             replyHandler?([:])
             return
         }
+        if kind == SummitSync.workoutSummary {
+            ingestWorkout(message, in: context)
+            replyHandler?([:])
+            return
+        }
         switch kind {
         case WatchSync.start:
             startSession(in: context)
@@ -139,6 +144,15 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         } else {
             replyHandler?([:])
         }
+    }
+
+    private func ingestWorkout(_ message: [String: Any], in context: ModelContext) {
+        guard let data = message[SummitSync.payload] as? Data,
+              let payload = try? JSONDecoder().decode(ClimbSessionPayload.self, from: data) else { return }
+        let existing = try? context.fetch(FetchDescriptor<ClimbSession>())
+        if existing?.contains(where: { $0.id == payload.id }) == true { return }
+        context.insert(ClimbSession(payload: payload))
+        try? context.save()
     }
 
     private func startSession(in context: ModelContext) {

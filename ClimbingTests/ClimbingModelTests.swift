@@ -167,4 +167,33 @@ final class ClimbingModelTests: XCTestCase {
         XCTAssertEqual(log.gradeScale?.name, "Gym Circuit")
         XCTAssertEqual(scale.logs.count, 1)
     }
+
+    func testClimbSessionRoundTripsHeartRateSeries() throws {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(
+            for: ClimbSession.self,
+            configurations: config
+        )
+        let context = ModelContext(container)
+        let samples = [
+            HeartRateSample(timestamp: 1_000, bpm: 128),
+            HeartRateSample(timestamp: 1_010, bpm: 142),
+        ]
+        let session = ClimbSession(
+            startDate: Date(timeIntervalSince1970: 1_000),
+            endDate: Date(timeIntervalSince1970: 1_600),
+            totalElevationGain: 120,
+            activeCalories: 220,
+            bodyStressIndex: 4.5,
+            cardiovascularStrain: 18,
+            heartRateSeries: samples
+        )
+        context.insert(session)
+        try context.save()
+
+        let fetched = try XCTUnwrap(try context.fetch(FetchDescriptor<ClimbSession>()).first)
+        XCTAssertEqual(fetched.heartRateSeries, samples)
+        XCTAssertEqual(fetched.totalElevationGain, 120)
+        XCTAssertEqual(fetched.payload.activeCalories, 220)
+    }
 }
