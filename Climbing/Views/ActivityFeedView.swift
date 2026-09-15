@@ -60,7 +60,7 @@ struct ActivityFeedView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Color.stravaOrange, in: Capsule())
-                Text(payload.phase.displayName.uppercased())
+                Text(payload.phase == .climbing ? "Climbing" : "Resting")
                     .font(.caption.bold())
                     .foregroundStyle(payload.phase == .climbing ? .green : .secondary)
                 Spacer()
@@ -115,8 +115,8 @@ struct ActivityFeedView: View {
                     label: "Vert speed"
                 )
                 heroCard(
-                    value: String(format: "%.1f", payload.bodyStressIndex),
-                    label: "Body stress"
+                    value: SessionClock.format(payload.climbingTime),
+                    label: "Time climbing"
                 )
             }
         }
@@ -154,12 +154,12 @@ struct ActivityFeedView: View {
                 label: "Active kcal"
             )
             heroCard(
-                value: String(format: "%.1f", payload.bodyStressIndex),
-                label: "Body stress"
+                value: payload.peakBPM.map(String.init) ?? "--",
+                label: "Peak BPM"
             )
             heroCard(
-                value: String(format: "%.1f×", payload.climbRestRatio),
-                label: "Climb / rest"
+                value: SessionClock.format(payload.climbingTime),
+                label: "Time climbing"
             )
         }
     }

@@ -60,12 +60,9 @@ struct WatchMetricsPage: View {
                         .foregroundStyle(.yellow)
                 }
                 Spacer()
-                Text(manager.phase.displayName.uppercased())
+                Text(manager.phase == .climbing ? "Climbing" : "Resting")
                     .font(.caption2.bold())
                     .foregroundStyle(manager.phase == .climbing ? .green : .secondary)
-                Text(manager.currentZone.displayName)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.orange)
             }
 
             HStack(alignment: .lastTextBaseline, spacing: 4) {
@@ -174,35 +171,22 @@ struct WatchStrainPage: View {
     var manager: WorkoutManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 strainLine(
                     SessionClock.format(manager.climbingTime),
-                    "CLIMB"
+                    "CLIMBING"
                 )
                 strainLine(
                     SessionClock.format(manager.restingTime),
-                    "REST"
+                    "RESTING"
                 )
             }
-            HStack {
-                strainLine(peakBPM.map(String.init) ?? "--", "PEAK")
-                strainLine(String(format: "%.0f", manager.cardiovascularStrain), "TRIMP")
-            }
-            Spacer(minLength: 4)
-            HStack {
-                Text("STRESS")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(String(format: "%.1f", manager.bodyStressIndex))
-                    .font(.title3.bold().monospacedDigit())
-            }
-            ProgressView(value: manager.bodyStressIndex, total: 10)
-                .tint(manager.bodyStressIndex >= 7 ? .red : .orange)
+            strainLine(peakBPM.map { "\($0) BPM" } ?? "--", "PEAK HR")
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 4)
-        .navigationTitle("Effort")
+        .navigationTitle("Time")
         .navigationBarTitleDisplayMode(.inline)
     }
 
