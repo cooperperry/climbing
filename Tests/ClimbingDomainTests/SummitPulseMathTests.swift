@@ -42,10 +42,19 @@ final class ElevationMathTests: XCTestCase {
     func testNoiseFloorIgnoresTinyJitter() {
         var filter = ElevationFilter()
         filter.ingest(0)
-        XCTAssertNil(filter.ingest(0.2))
+        XCTAssertNil(filter.ingest(0.4))
         XCTAssertEqual(filter.gainMeters, 0)
-        XCTAssertEqual(filter.ingest(0.4), 0.4)
-        XCTAssertEqual(filter.gainMeters, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(filter.ingest(0.6), 0.6)
+        XCTAssertEqual(filter.gainMeters, 0.6, accuracy: 0.0001)
+    }
+
+    func testIdlePressureDriftDoesNotCountAsGain() {
+        var filter = ElevationFilter()
+        filter.ingest(0)
+        XCTAssertNil(filter.ingest(1.2, countingGain: false))
+        XCTAssertEqual(filter.gainMeters, 0)
+        XCTAssertEqual(filter.ingest(2.0, countingGain: true), 2.0)
+        XCTAssertEqual(filter.gainMeters, 0.8, accuracy: 0.0001)
     }
 
     func testDescentDoesNotReduceGain() {

@@ -9,6 +9,7 @@ struct WatchWorkoutView: View {
         if manager.isRunning || manager.isPaused {
             TabView {
                 WatchMetricsPage(manager: manager)
+                WatchLogPage(manager: manager)
                 WatchLandmarkPage(manager: manager)
                 WatchStrainPage(manager: manager)
                 WatchControlsPage(
@@ -172,6 +173,82 @@ struct WatchMetricsPage: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct WatchLogPage: View {
+    var manager: WorkoutManager
+    @State private var discipline: ClimbDiscipline = .boulder
+    @State private var selectedGrade = "V4"
+
+    private var grades: [String] {
+        discipline.usesRopeGrades
+            ? GradeScaleTemplate.standardYDS().grades
+            : GradeScaleTemplate.standardVScale().grades
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                ForEach(ClimbDiscipline.allCases) { item in
+                    Button {
+                        discipline = item
+                        selectedGrade = item.usesRopeGrades ? "5.10a" : "V4"
+                    } label: {
+                        Text(item == .boulder ? "V" : (item == .topRope ? "TR" : "L"))
+                    }
+                    .accessibilityLabel(item.displayName)
+                    .font(.system(size: 11, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(
+                        discipline == item ? Color.workoutGreen : Color.white.opacity(0.12),
+                        in: Capsule()
+                    )
+                    .foregroundStyle(discipline == item ? .black : .white)
+                    .buttonStyle(.plain)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(grades, id: \.self) { grade in
+                        Button(grade) { selectedGrade = grade }
+                            .font(.caption.bold())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(
+                                selectedGrade == grade ? Color.stravaOrange : Color.white.opacity(0.12),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(.white)
+                            .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            HStack(spacing: 6) {
+                Button("First try") {
+                    manager.logSend(grade: selectedGrade, outcome: .flash, discipline: discipline)
+                }
+                .tint(.yellow)
+                Button("Topped") {
+                    manager.logSend(grade: selectedGrade, outcome: .send, discipline: discipline)
+                }
+                .tint(.green)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(manager.isLocked)
+
+            if let latest = manager.loggedSends.first {
+                Text("\(latest.grade)  \(latest.outcome.displayName)")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Send")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

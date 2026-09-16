@@ -14,6 +14,7 @@ public enum WatchSync {
     public static let outcome = "outcome"
     public static let grade = "grade"
     public static let style = "style"
+    public static let discipline = "discipline"
     public static let from = "from"
     public static let to = "to"
     public static let payload = "payload"

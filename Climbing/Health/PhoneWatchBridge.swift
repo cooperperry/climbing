@@ -201,10 +201,20 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
 
     private func log(from message: [String: Any], in context: ModelContext) {
         seedScaleIfNeeded(in: context)
-        guard let session = activeSession(in: context) else { return }
+        let session: ClimbingSession
+        if let existing = activeSession(in: context) {
+            session = existing
+        } else {
+            let created = ClimbingSession()
+            context.insert(created)
+            session = created
+        }
+        let discipline = (message[WatchSync.discipline] as? String)
+            .flatMap(ClimbDiscipline.init(rawValue:)) ?? .boulder
+        let scale = scale(for: discipline, in: context)
         let grade = (message[WatchSync.grade] as? String)
             ?? selectedGrade
-            ?? defaultScale(in: context)?.grades.first
+            ?? scale?.grades.first
         guard let grade else { return }
         let outcome = ClimbOutcome(rawValue: message[WatchSync.outcome] as? String ?? "") ?? .attempt
         let style = (message[WatchSync.style] as? String).flatMap(ClimbStyle.init(rawValue:))
@@ -216,8 +226,9 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             attempts: outcome == .flash ? 1 : (outcome == .send ? 2 : 1),
             outcome: outcome,
             style: style,
+            discipline: discipline,
             session: session,
-            gradeScale: defaultScale(in: context)
+            gradeScale: scale
         )
         context.insert(entry)
         try? context.save()
@@ -286,12 +297,21 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         return scales.first { $0.isDefault } ?? scales.first
     }
 
+    private func scale(for discipline: ClimbDiscipline, in context: ModelContext) -> CustomGradeScale? {
+        let kind: GradeScaleKind = discipline.usesRopeGrades ? .yds : .boulderVScale
+        let scales = (try? context.fetch(FetchDescriptor<CustomGradeScale>())) ?? []
+        return scales.first { $0.kind == kind } ?? defaultScale(in: context)
+    }
+
     private func seedScaleIfNeeded(in context: ModelContext) {
         let scales = (try? context.fetch(FetchDescriptor<CustomGradeScale>())) ?? []
-        if scales.isEmpty {
+        if scales.contains(where: { $0.kind == .boulderVScale }) == false {
             context.insert(CustomGradeScale(template: .standardVScale(), isDefault: true))
-            try? context.save()
         }
+        if scales.contains(where: { $0.kind == .yds }) == false {
+            context.insert(CustomGradeScale(template: .standardYDS()))
+        }
+        try? context.save()
     }
 
     private func makeSnapshot(in context: ModelContext) -> WatchSnapshot {

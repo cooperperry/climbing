@@ -31,6 +31,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     var sessionID = UUID()
     var isStarting = false
     var phase: ClimbPhase = .resting
+    var loggedSends: [SessionSend] = []
 
     var landmarkProgress: LandmarkProgress {
         LandmarkMath.progress(
@@ -160,6 +161,25 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         send(payload, kind: SummitSync.workoutSummary)
     }
 
+    func logSend(grade: String, outcome: ClimbOutcome, discipline: ClimbDiscipline) {
+        let send = SessionSend(grade: grade, outcome: outcome, discipline: discipline)
+        loggedSends.insert(send, at: 0)
+        if loggedSends.count > 12 {
+            loggedSends = Array(loggedSends.prefix(12))
+        }
+        WKInterfaceDevice.current().play(.success)
+        var message: [String: Any] = [
+            WatchSync.kind: WatchSync.log,
+            WatchSync.grade: grade,
+            WatchSync.outcome: outcome.rawValue,
+            WatchSync.discipline: discipline.rawValue,
+        ]
+        if let data = try? JSONEncoder().encode(Array(heartRates.suffix(40))) {
+            message[WatchSync.heartRates] = data
+        }
+        sendWatchMessage(message)
+    }
+
     func snapshot(endDate: Date? = nil, live: Bool = false) -> ClimbSessionPayload {
         ClimbSessionPayload(
             id: sessionID,
@@ -189,13 +209,16 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, _ in
             guard let self, let data, self.isRunning, !self.isPaused else { return }
             let meters = data.relativeAltitude.doubleValue
-            if self.filter.ingest(meters) != nil {
+            let moving = self.motionVariance >= StrainMath.climbingMotionThreshold
+            if self.filter.ingest(meters, countingGain: moving) != nil {
                 self.verticalGainMeters = self.filter.gainMeters
                 self.maxAltitude = self.filter.maxAltitude
                 let t = Date().timeIntervalSince1970
                 self.gainTimeline.append((t, self.filter.gainMeters))
                 let cutoff = t - 90
                 self.gainTimeline.removeAll { $0.t < cutoff }
+            } else {
+                self.verticalGainMeters = self.filter.gainMeters
             }
         }
     }
@@ -242,6 +265,14 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         elapsed = max(0, now.timeIntervalSince(startDate) - pausedAccumulated)
         let dt = now.timeIntervalSince(lastTick)
         self.lastTick = now
+        if motionVariance < StrainMath.climbingMotionThreshold {
+            verticalSpeedMPerMin = 0
+        } else {
+            verticalSpeedMPerMin = VerticalSpeed.metersPerMinute(
+                samples: gainTimeline,
+                now: now.timeIntervalSince1970
+            )
+        }
         let detected = StrainMath.phase(
             verticalSpeedMPerMin: verticalSpeedMPerMin,
             motionVariance: motionVariance
@@ -252,10 +283,6 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         } else {
             restingTime += dt
         }
-        verticalSpeedMPerMin = VerticalSpeed.metersPerMinute(
-            samples: gainTimeline,
-            now: now.timeIntervalSince1970
-        )
         if let bpm = currentBPM {
             let zone = HeartRateZone.zone(bpm: bpm, maxHR: maxHR)
             currentZone = zone
@@ -330,6 +357,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         hrvSDNN = nil
         lastLiveSent = nil
         phase = .resting
+        loggedSends = []
     }
 
     // MARK: - HealthKit
@@ -430,6 +458,22 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         }
     }
 
+    private func sendWatchMessage(_ message: [String: Any]) {
+        guard WCSession.isSupported() else { return }
+        let session = WCSession.default
+        guard session.activationState == .activated else {
+            session.transferUserInfo(message)
+            return
+        }
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: { _ in }, errorHandler: { _ in
+                session.transferUserInfo(message)
+            })
+        } else {
+            session.transferUserInfo(message)
+        }
+    }
+
     private static func variance(_ values: [Double]) -> Double {
         guard values.count > 1 else { return 0 }
         let mean = values.reduce(0, +) / Double(values.count)
@@ -473,4 +517,12 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             self.refreshEnergyFromBuilder()
         }
     }
+}
+
+/// A send logged from the Watch during the current workout.
+struct SessionSend: Identifiable, Equatable {
+    var id = UUID()
+    var grade: String
+    var outcome: ClimbOutcome
+    var discipline: ClimbDiscipline
 }

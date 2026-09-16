@@ -3,7 +3,8 @@ import Foundation
 /// Relative-altitude smoothing: ignore sub-threshold jitter, accumulate only
 /// upward movement for vertical gain.
 public struct ElevationFilter: Equatable, Sendable {
-    public static let noiseMeters = 0.3
+    /// Indoor HVAC easily moves 0.3 m of pressure; require a clearer step.
+    public static let noiseMeters = 0.5
 
     public private(set) var lastAltitude: Double?
     public private(set) var gainMeters: Double
@@ -15,14 +16,21 @@ public struct ElevationFilter: Equatable, Sendable {
         self.maxAltitude = maxAltitude
     }
 
-    /// Apply a new relative-altitude reading (meters). Returns the accepted
-    /// altitude when the sample cleared the noise floor; otherwise `nil`.
+    /// Apply a new relative-altitude reading (meters).
+    ///
+    /// When `countingGain` is false (wrist still / resting), the filter follows
+    /// pressure drift so a later real climb does not dump the idle change in as
+    /// ascent. Gain only accumulates while moving.
     @discardableResult
-    public mutating func ingest(_ relativeMeters: Double) -> Double? {
+    public mutating func ingest(_ relativeMeters: Double, countingGain: Bool = true) -> Double? {
         guard let last = lastAltitude else {
             lastAltitude = relativeMeters
             maxAltitude = relativeMeters
             return relativeMeters
+        }
+        if !countingGain {
+            lastAltitude = relativeMeters
+            return nil
         }
         let delta = relativeMeters - last
         guard abs(delta) >= Self.noiseMeters else { return nil }
