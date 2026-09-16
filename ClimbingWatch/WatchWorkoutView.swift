@@ -178,11 +178,9 @@ struct WatchMetricsPage: View {
 
 struct WatchLogPage: View {
     var manager: WorkoutManager
-    @State private var discipline: ClimbDiscipline = .boulder
-    @State private var selectedGrade = "V4"
 
     private var grades: [String] {
-        discipline.usesRopeGrades
+        manager.logDiscipline.usesRopeGrades
             ? GradeScaleTemplate.standardYDS().grades
             : GradeScaleTemplate.standardVScale().grades
     }
@@ -191,34 +189,38 @@ struct WatchLogPage: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 ForEach(ClimbDiscipline.allCases) { item in
+                    let selected = manager.logDiscipline == item
                     Button {
-                        discipline = item
-                        selectedGrade = item.usesRopeGrades ? "5.10a" : "V4"
+                        manager.selectLogDiscipline(item)
                     } label: {
-                        Text(item == .boulder ? "V" : (item == .topRope ? "TR" : "L"))
+                        Text(item.shortName)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .minimumScaleFactor(0.7)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .padding(.horizontal, 2)
+                            .background(
+                                selected ? Color.workoutGreen : Color.white.opacity(0.14),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            )
+                            .foregroundStyle(selected ? .black : .white)
                     }
-                    .accessibilityLabel(item.displayName)
-                    .font(.system(size: 11, weight: .bold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-                    .background(
-                        discipline == item ? Color.workoutGreen : Color.white.opacity(0.12),
-                        in: Capsule()
-                    )
-                    .foregroundStyle(discipline == item ? .black : .white)
                     .buttonStyle(.plain)
+                    .accessibilityLabel(item.displayName)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(grades, id: \.self) { grade in
-                        Button(grade) { selectedGrade = grade }
+                        Button(grade) { manager.selectLogGrade(grade) }
                             .font(.caption.bold())
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
                             .background(
-                                selectedGrade == grade ? Color.stravaOrange : Color.white.opacity(0.12),
+                                manager.logGrade == grade ? Color.stravaOrange : Color.white.opacity(0.12),
                                 in: Capsule()
                             )
                             .foregroundStyle(.white)
@@ -229,11 +231,19 @@ struct WatchLogPage: View {
 
             HStack(spacing: 6) {
                 Button("First try") {
-                    manager.logSend(grade: selectedGrade, outcome: .flash, discipline: discipline)
+                    manager.logSend(
+                        grade: manager.logGrade,
+                        outcome: .flash,
+                        discipline: manager.logDiscipline
+                    )
                 }
                 .tint(.yellow)
                 Button("Topped") {
-                    manager.logSend(grade: selectedGrade, outcome: .send, discipline: discipline)
+                    manager.logSend(
+                        grade: manager.logGrade,
+                        outcome: .send,
+                        discipline: manager.logDiscipline
+                    )
                 }
                 .tint(.green)
             }

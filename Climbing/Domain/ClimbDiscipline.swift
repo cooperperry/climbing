@@ -17,6 +17,15 @@ public enum ClimbDiscipline: String, CaseIterable, Codable, Identifiable, Sendab
         }
     }
 
+    /// Watch Send control: full words that still fit three equal segments.
+    public var shortName: String {
+        switch self {
+        case .boulder: return "Boulder"
+        case .topRope: return "Top rope"
+        case .lead: return "Lead"
+        }
+    }
+
     public var symbolName: String {
         switch self {
         case .boulder: return "circle.grid.3x3.fill"

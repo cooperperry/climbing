@@ -32,6 +32,8 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     var isStarting = false
     var phase: ClimbPhase = .resting
     var loggedSends: [SessionSend] = []
+    var logDiscipline: ClimbDiscipline = .boulder
+    var logGrade: String = "V4"
 
     var landmarkProgress: LandmarkProgress {
         LandmarkMath.progress(
@@ -59,6 +61,11 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     private var maxHR = StrainMath.defaultMaxHR
     private var weightKg = StrainMath.defaultWeightKg
     private var lastLiveSent: Date?
+    private var lastGradeByDiscipline: [ClimbDiscipline: String] = [
+        .boulder: "V4",
+        .topRope: "5.10a",
+        .lead: "5.10a",
+    ]
 
     private override init() {
         super.init()
@@ -159,6 +166,17 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         isLocked = false
         startDate = nil
         send(payload, kind: SummitSync.workoutSummary)
+    }
+
+    func selectLogDiscipline(_ item: ClimbDiscipline) {
+        lastGradeByDiscipline[logDiscipline] = logGrade
+        logDiscipline = item
+        logGrade = lastGradeByDiscipline[item] ?? (item.usesRopeGrades ? "5.10a" : "V4")
+    }
+
+    func selectLogGrade(_ grade: String) {
+        logGrade = grade
+        lastGradeByDiscipline[logDiscipline] = grade
     }
 
     func logSend(grade: String, outcome: ClimbOutcome, discipline: ClimbDiscipline) {

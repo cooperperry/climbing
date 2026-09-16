@@ -76,6 +76,12 @@ final class ClimbDisciplineTests: XCTestCase {
         XCTAssertEqual(ClimbDiscipline.lead.displayName, "Lead")
     }
 
+    func testShortNamesAreFullWords() {
+        XCTAssertEqual(ClimbDiscipline.boulder.shortName, "Boulder")
+        XCTAssertEqual(ClimbDiscipline.topRope.shortName, "Top rope")
+        XCTAssertEqual(ClimbDiscipline.lead.shortName, "Lead")
+    }
+
     func testOnlyBoulderUsesVScale() {
         XCTAssertFalse(ClimbDiscipline.boulder.usesRopeGrades)
         XCTAssertTrue(ClimbDiscipline.topRope.usesRopeGrades)
