@@ -161,7 +161,7 @@ struct RouteLogView: View {
         let start = Calendar.current.startOfDay(for: .now)
         let today = logs.filter { $0.loggedAt >= start }
         if today.isEmpty {
-            Text("Today's tops show here. Open Sessions to see other days.")
+            Text("Today's tops show here. Open Sessions to see past workouts.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
