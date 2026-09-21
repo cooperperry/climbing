@@ -25,4 +25,14 @@ final class GymJoinMathTests: XCTestCase {
         XCTAssertFalse(GymJoinMath.isUsableName("A"))
         XCTAssertTrue(GymJoinMath.isUsableName("AB"))
     }
+
+    func testNextGridSlotFillsLeftToRight() {
+        let first = GymJoinMath.nextGridSlot(existingCount: 0)
+        let second = GymJoinMath.nextGridSlot(existingCount: 1)
+        XCTAssertEqual(first.x, 0.5 / 3, accuracy: 0.0001)
+        XCTAssertGreaterThan(second.x, first.x)
+        let fourth = GymJoinMath.nextGridSlot(existingCount: 3)
+        XCTAssertEqual(fourth.x, first.x, accuracy: 0.0001)
+        XCTAssertGreaterThan(fourth.y, first.y)
+    }
 }

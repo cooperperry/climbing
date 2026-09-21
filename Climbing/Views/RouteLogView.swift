@@ -66,7 +66,7 @@ struct RouteLogView: View {
             .padding(12)
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         } else {
-            Text("Join a gym on the Gyms tab to tag these sends to a wall map.")
+            Text("Join a gym on the Gyms tab. Snap the wall you're on to log sends there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

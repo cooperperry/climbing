@@ -1,7 +1,8 @@
 import Foundation
 import SwiftData
 
-/// A named wall / sector on a gym map, stored as a 0...1 pin.
+/// A named wall at a gym. The gym map is these walls — usually a photo you
+/// took standing in front of it, not a floor plan.
 @Model
 final class GymArea {
     var id: UUID
@@ -10,12 +11,17 @@ final class GymArea {
     var y: Double
     var gym: ClimbGym?
 
+    /// Photo of this wall. Optional so older pins migrate, and so a wall can
+    /// be named before anyone snaps it.
+    var photoData: Data?
+
     init(
         id: UUID = UUID(),
         name: String,
         x: Double,
         y: Double,
-        gym: ClimbGym? = nil
+        gym: ClimbGym? = nil,
+        photoData: Data? = nil
     ) {
         self.id = id
         self.name = name
@@ -23,5 +29,6 @@ final class GymArea {
         self.x = clamped.x
         self.y = clamped.y
         self.gym = gym
+        self.photoData = photoData
     }
 }

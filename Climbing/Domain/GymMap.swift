@@ -55,4 +55,15 @@ public enum GymJoinMath {
     public static func isUsableName(_ name: String) -> Bool {
         normalizedName(name).count >= 2
     }
+
+    /// Place the next wall card in a left-to-right grid so a gym can be mapped
+    /// without a floor-plan photo.
+    public static func nextGridSlot(existingCount: Int, columns: Int = 3) -> (x: Double, y: Double) {
+        let cols = max(1, columns)
+        let col = existingCount % cols
+        let row = existingCount / cols
+        let x = (Double(col) + 0.5) / Double(cols)
+        let y = min(0.92, 0.18 + Double(row) * 0.22)
+        return clampPin(x: x, y: y)
+    }
 }

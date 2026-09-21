@@ -18,7 +18,7 @@ struct GymListView: View {
                     ContentUnavailableView {
                         Label("No gym yet", systemImage: "building.2")
                     } description: {
-                        Text("Join the gym you're climbing at. Add a floor-plan photo and drop walls so sends stick to a spot on the map.")
+                        Text("Join the gym you're climbing at. Walk up to a wall, snap it, and log sends on that photo.")
                     } actions: {
                         Button("Join a gym") { showingJoin = true }
                     }

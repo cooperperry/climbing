@@ -37,7 +37,8 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
         INFOPLIST_KEY_NSHealthShareUsageDescription: "Climber reads heart rate, HRV, and energy from Apple Health to measure climbing strain and calories."
         INFOPLIST_KEY_NSMotionUsageDescription: "Climber uses the barometer and wrist motion to measure vertical gain and climbing vs rest."
-        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Climber uses a gym floor-plan photo so you can drop walls and log sends on the map."
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Climber saves photos of gym walls so you can log sends on that wall."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Climber takes a photo of the wall in front of you to add it to the gym map."
 
   ClimbingWatch:
     type: application
