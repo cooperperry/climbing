@@ -15,6 +15,10 @@ final class GymArea {
     /// be named before anyone snaps it.
     var photoData: Data?
 
+    /// Today's problems on this photo. Cleared on a set reset; send logs stay.
+    @Relationship(deleteRule: .cascade, inverse: \GymRoute.wall)
+    var routes: [GymRoute] = []
+
     init(
         id: UUID = UUID(),
         name: String,

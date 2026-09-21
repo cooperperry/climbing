@@ -11,6 +11,12 @@ extension ShapeStyle where Self == Color {
     }
 }
 
+extension Color {
+    init(hold color: HoldColor) {
+        self.init(red: color.red, green: color.green, blue: color.blue)
+    }
+}
+
 /// Compact BPM sparkline from heart-rate samples.
 struct BPMSparkline: View {
     var samples: [HeartRateSample]

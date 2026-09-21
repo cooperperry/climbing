@@ -12,6 +12,8 @@ final class ClimbGym {
     /// One gym is "I'm here" for new sends.
     var isCurrent: Bool
     var mapImageData: Data?
+    /// Wall you're on right now. Optional so gyms from before walls existed migrate.
+    var currentWallName: String?
 
     @Relationship(deleteRule: .cascade, inverse: \GymArea.gym)
     var areas: [GymArea] = []
@@ -33,5 +35,6 @@ final class ClimbGym {
         self.joinedAt = joinedAt
         self.isCurrent = isCurrent
         self.mapImageData = mapImageData
+        self.currentWallName = nil
     }
 }

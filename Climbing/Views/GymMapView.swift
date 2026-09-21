@@ -3,8 +3,8 @@ import SwiftData
 import PhotosUI
 import UIKit
 
-/// A gym mapped as the walls you've stood in front of — snap the wall, name it,
-/// log sends on that photo. No floor plan required.
+/// A gym mapped as the walls you've stood in front of — snap the wall, pin
+/// today's routes on that photo, and the Watch shows the same map.
 struct GymMapView: View {
     @Bindable var gym: ClimbGym
     @Environment(\.modelContext) private var context
@@ -28,9 +28,16 @@ struct GymMapView: View {
     @State private var draftImage: UIImage?
     @State private var draftName = ""
     @State private var selectedArea: GymArea?
+    @State private var selectedRoute: GymRoute?
     @State private var logDiscipline: ClimbDiscipline = .boulder
     @State private var logGrade: String?
+    @State private var draftColor: HoldColor = .blue
+    @State private var draftPin: DraftPin?
     @State private var sendTrigger = 0
+    @State private var showingRetakeCamera = false
+    @State private var confirmNewSet = false
+    @State private var retakeImage: UIImage?
+    @State private var retakeItem: PhotosPickerItem?
     @FocusState private var nameFocused: Bool
 
     private var scale: CustomGradeScale? {
@@ -52,6 +59,9 @@ struct GymMapView: View {
                 if walls.isEmpty {
                     emptyBoard
                 } else {
+                    Text("Pin today's routes on the wall photo. The Watch shows this map — tap a pin to log a send. When the set changes, replace the photo; past sends stay on the wall.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     wallBoard
                 }
                 if let selectedArea {
@@ -67,18 +77,44 @@ struct GymMapView: View {
                 Button("Add wall", systemImage: "camera.fill") { openAdd() }
             }
         }
-        .onAppear { prepareGrades() }
+        .onAppear {
+            prepareGrades()
+            if selectedArea == nil, let name = gym.currentWallName {
+                selectedArea = walls.first(where: { $0.name == name })
+            }
+        }
         .onChange(of: logDiscipline) { _, _ in
             logGrade = scale?.grades.first
         }
         .onChange(of: photoItem) { _, item in
             Task { await loadLibraryPhoto(item) }
         }
+        .onChange(of: retakeItem) { _, item in
+            Task { await loadRetakePhoto(item) }
+        }
+        .onChange(of: retakeImage) { _, image in
+            applyRetake(image)
+        }
         .sheet(isPresented: $showingAdd, onDismiss: resetDraft) {
             addWallSheet
         }
+        .sheet(item: $draftPin) { pin in
+            pinEditor(at: pin)
+        }
+        .confirmationDialog("New set?", isPresented: $confirmNewSet, titleVisibility: .visible) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take photo") { showingRetakeCamera = true }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces the photo and today's pins. Past sends stay on \(selectedArea?.name ?? "this wall"), and the Watch map updates.")
+        }
         .fullScreenCover(isPresented: $showingCamera) {
             CameraPicker(image: $draftImage)
+                .ignoresSafeArea()
+        }
+        .fullScreenCover(isPresented: $showingRetakeCamera) {
+            CameraPicker(image: $retakeImage)
                 .ignoresSafeArea()
         }
         .sensoryFeedback(.success, trigger: sendTrigger)
@@ -142,7 +178,7 @@ struct GymMapView: View {
         let selected = selectedArea?.id == area.id
         let sends = gymLogs.filter { $0.areaName == area.name && $0.outcome.isCompletion }.count
         return Button {
-            selectedArea = area
+            makeActive(area)
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 wallPhoto(area)
@@ -153,9 +189,9 @@ struct GymMapView: View {
                         .font(.subheadline.bold())
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    Text(sends == 1 ? "1 send" : "\(sends) sends")
+                    Text(wallSubtitle(area, sends: sends))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(gym.currentWallName == area.name ? .stravaOrange : .secondary)
                 }
                 .padding(8)
             }
@@ -257,50 +293,80 @@ struct GymMapView: View {
 
     private func logCard(for area: GymArea) -> some View {
         let rows = gymLogs.filter { $0.areaName == area.name }
+        let pins = area.routes.sorted { $0.createdAt < $1.createdAt }
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(area.name)
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(area.name)
+                        .font(.headline)
+                    if gym.currentWallName == area.name {
+                        Text("Watch map")
+                            .font(.caption.bold())
+                            .foregroundStyle(.stravaOrange)
+                    }
+                }
                 Spacer()
-                Button("Remove", role: .destructive) {
-                    if selectedArea?.id == area.id { selectedArea = nil }
-                    context.delete(area)
-                    try? context.save()
+                Button("Remove wall", role: .destructive) {
+                    removeWall(area)
                 }
                 .font(.caption.bold())
             }
 
-            Picker("Type", selection: $logDiscipline) {
-                ForEach(ClimbDiscipline.allCases) { item in
-                    Text(item.displayName).tag(item)
+            WallPinCanvas(
+                photoData: area.photoData,
+                routes: pins,
+                selectedID: selectedRoute?.id,
+                onTapMap: { x, y in
+                    makeActive(area)
+                    selectedRoute = nil
+                    draftPin = DraftPin(x: x, y: y)
+                },
+                onTapRoute: { route in
+                    makeActive(area)
+                    selectedRoute = route
+                    logGrade = route.grade
+                    logDiscipline = route.discipline
                 }
-            }
-            .pickerStyle(.segmented)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack {
-                    ForEach(scale?.grades ?? [], id: \.self) { grade in
-                        Button(grade) { logGrade = grade }
-                            .font(.subheadline.bold())
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                logGrade == grade ? AnyShapeStyle(.stravaOrange) : AnyShapeStyle(.quaternary),
-                                in: Capsule()
-                            )
-                            .foregroundStyle(logGrade == grade ? Color.white : Color.primary)
-                    }
-                }
-            }
+            )
+            .frame(minHeight: 220)
 
             HStack {
-                Button("First try") { log(outcome: .flash, attempts: 1, area: area) }
-                    .tint(.yellow)
-                Button("Topped") { log(outcome: .send, attempts: 2, area: area) }
-                    .tint(.green)
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button("New set", systemImage: "camera.fill") {
+                        confirmNewSet = true
+                    }
+                    .font(.caption.bold())
+                }
+                PhotosPicker(selection: $retakeItem, matching: .images) {
+                    Label("New set · Library", systemImage: "photo")
+                        .font(.caption.bold())
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(logGrade == nil)
+
+            if pins.isEmpty {
+                Text("Tap the photo on each problem. That’s the map the Watch uses.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let selectedRoute {
+                HStack {
+                    Text(selectedRoute.label)
+                        .font(.subheadline.bold())
+                    Spacer()
+                    Button("Remove pin", role: .destructive) {
+                        removeRoute(selectedRoute)
+                    }
+                    .font(.caption.bold())
+                }
+                HStack {
+                    Button("First try") { log(outcome: .flash, attempts: 1, area: area, route: selectedRoute) }
+                        .tint(.yellow)
+                    Button("Topped") { log(outcome: .send, attempts: 2, area: area, route: selectedRoute) }
+                        .tint(.green)
+                }
+                .buttonStyle(.borderedProminent)
+            }
 
             if rows.isEmpty {
                 Text("No sends on this wall yet")
@@ -309,7 +375,7 @@ struct GymMapView: View {
             } else {
                 ForEach(rows.prefix(8)) { entry in
                     HStack {
-                        Text(entry.gradeLabel).bold()
+                        Text(entry.routeLabel ?? entry.gradeLabel).bold()
                         Text(entry.outcome.displayName)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -320,6 +386,73 @@ struct GymMapView: View {
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func pinEditor(at pin: DraftPin) -> some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Picker("Type", selection: $logDiscipline) {
+                    ForEach(ClimbDiscipline.allCases) { item in
+                        Text(item.displayName).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text("Color")
+                    .font(.headline)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(HoldColor.allCases) { color in
+                            Button {
+                                draftColor = color
+                            } label: {
+                                Circle()
+                                    .fill(Color(hold: color))
+                                    .frame(width: 28, height: 28)
+                                    .overlay {
+                                        Circle()
+                                            .strokeBorder(draftColor == color ? Color.primary : Color.clear, lineWidth: 2)
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(color.displayName)
+                        }
+                    }
+                }
+
+                Text("Grade")
+                    .font(.headline)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(scale?.grades ?? [], id: \.self) { grade in
+                            Button(grade) { logGrade = grade }
+                                .font(.subheadline.bold())
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    logGrade == grade ? AnyShapeStyle(.stravaOrange) : AnyShapeStyle(.quaternary),
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(logGrade == grade ? Color.white : Color.primary)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Pin route")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { draftPin = nil }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { savePin(at: pin) }
+                        .disabled(logGrade == nil)
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 
     private func openAdd() {
@@ -344,28 +477,106 @@ struct GymMapView: View {
             photoData: draftImage?.jpegData(compressionQuality: 0.7)
         )
         context.insert(area)
-        try? context.save()
-        selectedArea = area
+        makeActive(area)
         showingAdd = false
         sendTrigger += 1
     }
 
-    private func log(outcome: ClimbOutcome, attempts: Int, area: GymArea) {
-        guard let grade = logGrade else { return }
-        for item in gyms { item.isCurrent = (item.id == gym.id) }
+    private func savePin(at pin: DraftPin) {
+        guard let area = selectedArea, let grade = logGrade else { return }
+        let route = GymRoute(
+            grade: grade,
+            colorName: draftColor.rawValue,
+            x: pin.x,
+            y: pin.y,
+            discipline: logDiscipline,
+            wall: area
+        )
+        context.insert(route)
+        selectedRoute = route
+        draftPin = nil
+        try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
+        sendTrigger += 1
+    }
+
+    private func log(outcome: ClimbOutcome, attempts: Int, area: GymArea, route: GymRoute) {
+        makeActive(area)
         let entry = ClimbLog(
-            gradeLabel: grade,
+            gradeLabel: route.grade,
             attempts: attempts,
             outcome: outcome,
-            discipline: logDiscipline,
+            discipline: route.discipline,
             gym: gym,
             areaName: area.name,
+            routeLabel: route.label,
             session: todaySession(),
             gradeScale: scale
         )
         context.insert(entry)
         try? context.save()
         sendTrigger += 1
+    }
+
+    private func makeActive(_ area: GymArea) {
+        if selectedArea?.id != area.id {
+            selectedRoute = nil
+        }
+        selectedArea = area
+        gym.currentWallName = area.name
+        for item in gyms { item.isCurrent = (item.id == gym.id) }
+        try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
+    }
+
+    private func removeWall(_ area: GymArea) {
+        let name = area.name
+        if selectedArea?.id == area.id {
+            selectedArea = nil
+            selectedRoute = nil
+        }
+        context.delete(area)
+        if gym.currentWallName == name {
+            gym.currentWallName = gym.areas.first?.name
+            selectedArea = gym.areas.first
+        }
+        try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
+    }
+
+    private func removeRoute(_ route: GymRoute) {
+        if selectedRoute?.id == route.id { selectedRoute = nil }
+        context.delete(route)
+        try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
+    }
+
+    private func wallSubtitle(_ area: GymArea, sends: Int) -> String {
+        let count = sends == 1 ? "1 send" : "\(sends) sends"
+        let pins = area.routes.count
+        let pinText = pins == 1 ? "1 route" : "\(pins) routes"
+        if gym.currentWallName == area.name {
+            return "Watch · \(pinText) · \(count)"
+        }
+        return "\(pinText) · \(count)"
+    }
+
+    private func applyRetake(_ image: UIImage?) {
+        guard let image, let selectedArea else { return }
+        selectedArea.photoData = image.jpegData(compressionQuality: 0.7)
+        for route in selectedArea.routes {
+            context.delete(route)
+        }
+        selectedRoute = nil
+        retakeImage = nil
+        try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
+        sendTrigger += 1
+    }
+
+    private func loadRetakePhoto(_ item: PhotosPickerItem?) async {
+        guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
+        applyRetake(UIImage(data: data))
     }
 
     private func todaySession() -> ClimbingSession {
@@ -393,4 +604,10 @@ struct GymMapView: View {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
         draftImage = UIImage(data: data)
     }
+}
+
+private struct DraftPin: Identifiable {
+    let id = UUID()
+    var x: Double
+    var y: Double
 }

@@ -8,7 +8,7 @@ struct ClimbingApp: App {
     init() {
         do {
             container = try ModelContainer(
-                for: ClimbSession.self, ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self
+                for: ClimbSession.self, ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self, GymRoute.self
             )
         } catch {
             fatalError("Failed to create the SwiftData ModelContainer: \(error)")

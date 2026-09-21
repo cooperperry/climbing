@@ -10,3 +10,9 @@ extension ShapeStyle where Self == Color {
         Color(red: 0.988, green: 0.298, blue: 0.008)
     }
 }
+
+extension Color {
+    init(hold color: HoldColor) {
+        self.init(red: color.red, green: color.green, blue: color.blue)
+    }
+}

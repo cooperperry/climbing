@@ -51,6 +51,10 @@ final class ClimbLog {
     /// if the pin is later deleted.
     var areaName: String?
 
+    /// Hold color + grade at log time, e.g. "Blue V4". Optional so older rows
+    /// migrate; survives a set reset after the pin is gone.
+    var routeLabel: String?
+
     var loggedAt: Date
 
     /// Encoded `EffortTrace` for a send/flash (Watch motion + HR overlay).
@@ -81,6 +85,7 @@ final class ClimbLog {
         discipline: ClimbDiscipline? = nil,
         gym: ClimbGym? = nil,
         areaName: String? = nil,
+        routeLabel: String? = nil,
         session: ClimbingSession? = nil,
         gradeScale: CustomGradeScale? = nil,
         loggedAt: Date = .now
@@ -93,6 +98,7 @@ final class ClimbLog {
         self.discipline = discipline
         self.gym = gym
         self.areaName = areaName
+        self.routeLabel = routeLabel
         self.session = session
         self.gradeScale = gradeScale
         self.loggedAt = loggedAt

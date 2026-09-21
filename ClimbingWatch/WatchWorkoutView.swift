@@ -216,78 +216,151 @@ struct WatchLogPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                ForEach(ClimbDiscipline.allCases) { item in
-                    let selected = manager.logDiscipline == item
-                    Button {
-                        manager.selectLogDiscipline(item)
-                    } label: {
-                        Text(item.shortName)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .minimumScaleFactor(0.7)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity, minHeight: 36)
-                            .padding(.horizontal, 2)
-                            .background(
-                                selected ? Color.workoutGreen : Color.white.opacity(0.14),
-                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            )
-                            .foregroundStyle(selected ? .black : .white)
+            if manager.currentWallRoutes.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(ClimbDiscipline.allCases) { item in
+                        let selected = manager.logDiscipline == item
+                        Button {
+                            manager.selectLogDiscipline(item)
+                        } label: {
+                            Text(item.shortName)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .minimumScaleFactor(0.7)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity, minHeight: 32)
+                                .padding(.horizontal, 2)
+                                .background(
+                                    selected ? Color.workoutGreen : Color.white.opacity(0.14),
+                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                )
+                                .foregroundStyle(selected ? .black : .white)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(item.displayName)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(item.displayName)
-                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            if let gymName = manager.gymName {
+                Text(gymName)
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if manager.walls.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(manager.walls, id: \.self) { wall in
+                            Button(wall) { manager.selectLogWall(wall) }
+                                .font(.caption.bold())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    manager.logWall == wall ? Color.workoutGreen : Color.white.opacity(0.12),
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(.white)
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
+            } else if manager.walls.isEmpty {
+                Text(manager.gymName == nil
+                     ? "I'm here on the phone, then pin routes"
+                     : "Add a wall and pin routes on the phone")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            if manager.logWall != nil {
+                WatchRouteMap(
+                    photoData: manager.logWall.flatMap { manager.wallPhotos[$0] },
+                    routes: manager.currentWallRoutes,
+                    onSelect: { pin in
+                        manager.logRoute(pin, outcome: manager.logOutcome)
+                    }
+                )
+                .frame(maxHeight: 110)
+            }
+
+            if manager.currentWallRoutes.isEmpty == false {
                 HStack(spacing: 6) {
-                    ForEach(grades, id: \.self) { grade in
-                        Button(grade) { manager.selectLogGrade(grade) }
-                            .font(.caption.bold())
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(
-                                manager.logGrade == grade ? Color.stravaOrange : Color.white.opacity(0.12),
-                                in: Capsule()
-                            )
-                            .foregroundStyle(.white)
-                            .buttonStyle(.plain)
+                    outcomeButton("First try", .flash, .yellow)
+                    outcomeButton("Topped", .send, .green)
+                }
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(grades, id: \.self) { grade in
+                            Button(grade) { manager.selectLogGrade(grade) }
+                                .font(.caption.bold())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .background(
+                                    manager.logGrade == grade ? Color.stravaOrange : Color.white.opacity(0.12),
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(.white)
+                                .buttonStyle(.plain)
+                        }
                     }
                 }
-            }
 
-            HStack(spacing: 6) {
-                Button("First try") {
-                    manager.logSend(
-                        grade: manager.logGrade,
-                        outcome: .flash,
-                        discipline: manager.logDiscipline
-                    )
+                HStack(spacing: 6) {
+                    Button("First try") {
+                        manager.logSend(
+                            grade: manager.logGrade,
+                            outcome: .flash,
+                            discipline: manager.logDiscipline
+                        )
+                    }
+                    .tint(.yellow)
+                    Button("Topped") {
+                        manager.logSend(
+                            grade: manager.logGrade,
+                            outcome: .send,
+                            discipline: manager.logDiscipline
+                        )
+                    }
+                    .tint(.green)
                 }
-                .tint(.yellow)
-                Button("Topped") {
-                    manager.logSend(
-                        grade: manager.logGrade,
-                        outcome: .send,
-                        discipline: manager.logDiscipline
-                    )
-                }
-                .tint(.green)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(manager.isLocked)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(manager.isLocked)
 
             if let latest = manager.loggedSends.first {
-                Text("\(latest.grade)  \(latest.outcome.displayName)")
+                Text(watchSendCaption(latest))
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .navigationTitle("Send")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func outcomeButton(_ title: String, _ outcome: ClimbOutcome, _ tint: Color) -> some View {
+        let selected = manager.logOutcome == outcome
+        return Button(title) {
+            manager.selectLogOutcome(outcome)
+        }
+        .font(.caption.bold())
+        .frame(maxWidth: .infinity, minHeight: 28)
+        .background(selected ? tint : Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(selected ? .black : .white)
+        .buttonStyle(.plain)
+        .disabled(manager.isLocked)
+    }
+
+    private func watchSendCaption(_ send: SessionSend) -> String {
+        [send.wall, send.routeLabel ?? send.grade, send.outcome.displayName]
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 }
 

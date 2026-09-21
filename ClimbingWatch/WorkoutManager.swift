@@ -34,6 +34,13 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     var loggedSends: [SessionSend] = []
     var logDiscipline: ClimbDiscipline = .boulder
     var logGrade: String = "V4"
+    var gymName: String?
+    var gymWalls: [WatchWall] = []
+    var walls: [String] = []
+    var logWall: String?
+    var lastPhoneWall: String?
+    var wallPhotos: [String: Data] = [:]
+    var logOutcome: ClimbOutcome = .send
     var priorLifetimeGain = 0.0
     var warmupComplete = false
     var restPlan: RestPlan?
@@ -206,8 +213,63 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         lastGradeByDiscipline[logDiscipline] = grade
     }
 
-    func logSend(grade: String, outcome: ClimbOutcome, discipline: ClimbDiscipline) {
-        let send = SessionSend(grade: grade, outcome: outcome, discipline: discipline)
+    var currentWallRoutes: [WatchRoutePin] {
+        gymWalls.first { $0.name == logWall }?.routes ?? []
+    }
+
+    func selectLogWall(_ name: String) {
+        logWall = name
+    }
+
+    func selectLogOutcome(_ outcome: ClimbOutcome) {
+        logOutcome = outcome
+    }
+
+    func adoptGym(_ context: WatchGymContext) {
+        gymName = context.gymName
+        gymWalls = context.walls
+        walls = context.wallNames
+        logWall = WatchGymContext.pickWall(
+            walls: walls,
+            phoneCurrent: context.currentWall,
+            previousPhoneCurrent: lastPhoneWall,
+            watchWall: logWall
+        )
+        lastPhoneWall = context.currentWall
+        wallPhotos = wallPhotos.filter { walls.contains($0.key) }
+    }
+
+    func adoptWallPhotos(_ photos: [String: Data]) {
+        wallPhotos.merge(photos) { _, new in new }
+        wallPhotos = wallPhotos.filter { walls.contains($0.key) }
+    }
+
+    func logRoute(_ pin: WatchRoutePin, outcome: ClimbOutcome) {
+        logGrade = pin.grade
+        logDiscipline = pin.disciplineValue
+        logSend(
+            grade: pin.grade,
+            outcome: outcome,
+            discipline: pin.disciplineValue,
+            color: pin.color,
+            routeLabel: pin.label
+        )
+    }
+
+    func logSend(
+        grade: String,
+        outcome: ClimbOutcome,
+        discipline: ClimbDiscipline,
+        color: String? = nil,
+        routeLabel: String? = nil
+    ) {
+        let send = SessionSend(
+            grade: grade,
+            outcome: outcome,
+            discipline: discipline,
+            wall: logWall,
+            routeLabel: routeLabel
+        )
         loggedSends.insert(send, at: 0)
         if loggedSends.count > 12 {
             loggedSends = Array(loggedSends.prefix(12))
@@ -219,6 +281,15 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             WatchSync.outcome: outcome.rawValue,
             WatchSync.discipline: discipline.rawValue,
         ]
+        if let logWall {
+            message[WatchSync.wall] = logWall
+        }
+        if let color {
+            message[WatchSync.color] = color
+        }
+        if let routeLabel {
+            message[WatchSync.routeLabel] = routeLabel
+        }
         if let data = try? JSONEncoder().encode(Array(heartRates.suffix(40))) {
             message[WatchSync.heartRates] = data
         }
@@ -641,4 +712,6 @@ struct SessionSend: Identifiable, Equatable {
     var grade: String
     var outcome: ClimbOutcome
     var discipline: ClimbDiscipline
+    var wall: String?
+    var routeLabel: String?
 }

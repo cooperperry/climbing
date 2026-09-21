@@ -10,7 +10,7 @@ final class ClimbingModelTests: XCTestCase {
     private func makeContext() throws -> ModelContext {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(
-            for: ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self,
+            for: ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self, GymRoute.self,
             configurations: config
         )
         return ModelContext(container)
@@ -232,5 +232,64 @@ final class ClimbingModelTests: XCTestCase {
         XCTAssertEqual(gym.logs.count, 1)
         XCTAssertEqual(log.areaName, "Cave")
         XCTAssertTrue(GymJoinMath.namesMatch(gym.name, "movement rino"))
+    }
+
+    func testSendsStayOnTheWallAfterASetReset() throws {
+        let context = try makeContext()
+        let gym = ClimbGym(name: "Movement RiNo", isCurrent: true)
+        context.insert(gym)
+        let cave = GymArea(name: "Cave", x: 0.3, y: 0.4, gym: gym, photoData: Data([1, 2, 3]))
+        context.insert(cave)
+        gym.currentWallName = cave.name
+        let log = ClimbLog(
+            gradeLabel: "V4",
+            outcome: .send,
+            gym: gym,
+            areaName: cave.name
+        )
+        context.insert(log)
+        try context.save()
+
+        cave.photoData = Data([9, 9, 9])
+        try context.save()
+
+        XCTAssertEqual(log.areaName, "Cave")
+        XCTAssertEqual(gym.currentWallName, "Cave")
+        XCTAssertEqual(cave.photoData, Data([9, 9, 9]))
+    }
+
+    func testNewSetClearsPinsAndKeepsSendHistory() throws {
+        let context = try makeContext()
+        let gym = ClimbGym(name: "Movement RiNo", isCurrent: true)
+        context.insert(gym)
+        let cave = GymArea(name: "Cave", x: 0.3, y: 0.4, gym: gym, photoData: Data([1, 2, 3]))
+        context.insert(cave)
+        let pin = GymRoute(
+            grade: "V4",
+            colorName: HoldColor.blue.rawValue,
+            x: 0.4,
+            y: 0.5,
+            wall: cave
+        )
+        context.insert(pin)
+        let log = ClimbLog(
+            gradeLabel: "V4",
+            outcome: .send,
+            gym: gym,
+            areaName: cave.name,
+            routeLabel: pin.label
+        )
+        context.insert(log)
+        try context.save()
+        XCTAssertEqual(cave.routes.count, 1)
+
+        context.delete(pin)
+        cave.photoData = Data([9, 9, 9])
+        try context.save()
+
+        XCTAssertTrue(cave.routes.isEmpty)
+        XCTAssertEqual(log.areaName, "Cave")
+        XCTAssertEqual(log.routeLabel, "Blue V4")
+        XCTAssertEqual(gym.logs.count, 1)
     }
 }

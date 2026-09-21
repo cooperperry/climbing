@@ -263,5 +263,5 @@ struct RouteLogView: View {
 
 #Preview {
     RouteLogView()
-        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self], inMemory: true)
+        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self, GymRoute.self], inMemory: true)
 }

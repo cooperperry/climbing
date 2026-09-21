@@ -71,6 +71,9 @@ final class WatchStore: NSObject, WCSessionDelegate {
             WatchSync.outcome: outcome.rawValue,
             WatchSync.grade: grade,
         ]
+        if let wall = WorkoutManager.shared.logWall {
+            message[WatchSync.wall] = wall
+        }
         if let data = try? JSONEncoder().encode(WatchWorkoutController.shared.recentHeartRates()) {
             message[WatchSync.heartRates] = data
         }
@@ -147,6 +150,38 @@ final class WatchStore: NSObject, WCSessionDelegate {
         WorkoutManager.shared.adoptLifetimeGain(gain)
     }
 
+    private func ingestGym(_ message: [String: Any]) {
+        guard let data = message[WatchSync.gym] as? Data,
+              let gym = try? JSONDecoder().decode(WatchGymContext.self, from: data) else { return }
+        WorkoutManager.shared.adoptGym(gym)
+    }
+
+    private func ingestPhoneContext(_ message: [String: Any]) {
+        ingestLifetimeGain(message)
+        ingestGym(message)
+        ingestWallPhotos(message)
+    }
+
+    private func ingestWallPhotos(_ message: [String: Any]) {
+        let photos: [String: Data]
+        if let data = message[WatchSync.wallPhotos] as? Data,
+           let decoded = try? JSONDecoder().decode([String: Data].self, from: data) {
+            photos = decoded
+        } else if let typed = message[WatchSync.wallPhotos] as? [String: Data] {
+            photos = typed
+        } else if let raw = message[WatchSync.wallPhotos] as? [String: Any] {
+            var typed: [String: Data] = [:]
+            for (key, value) in raw {
+                if let data = value as? Data { typed[key] = data }
+            }
+            photos = typed
+        } else {
+            return
+        }
+        guard photos.isEmpty == false else { return }
+        WorkoutManager.shared.adoptWallPhotos(photos)
+    }
+
     private func send(_ message: [String: Any]) {
         guard let session, session.activationState == .activated else { return }
         if session.isReachable {
@@ -166,13 +201,22 @@ final class WatchStore: NSObject, WCSessionDelegate {
         _ session: WCSession,
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
-    ) {}
+    ) {
+        guard activationState == .activated else { return }
+        let context = session.receivedApplicationContext
+        Task { @MainActor in
+            if let data = context[WatchSync.payload] as? Data {
+                self.apply(data)
+            }
+            self.ingestPhoneContext(context)
+        }
+    }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         if let data = applicationContext[WatchSync.payload] as? Data {
             Task { @MainActor in self.apply(data) }
         }
-        Task { @MainActor in self.ingestLifetimeGain(applicationContext) }
+        Task { @MainActor in self.ingestPhoneContext(applicationContext) }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
@@ -180,7 +224,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
             if let data = message[WatchSync.payload] as? Data {
                 self.apply(data)
             }
-            self.ingestLifetimeGain(message)
+            self.ingestPhoneContext(message)
             let kind = message[WatchSync.kind] as? String
             if kind == WatchSync.start {
                 await WatchWorkoutController.shared.start()
@@ -222,7 +266,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
                 if let data = message[WatchSync.payload] as? Data {
                     self.apply(data)
                 }
-                self.ingestLifetimeGain(message)
+                self.ingestPhoneContext(message)
                 replyHandler([:])
             }
         }

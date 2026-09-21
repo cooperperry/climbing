@@ -22,6 +22,131 @@ public enum WatchSync {
     public static let rest = "rest"
     public static let skipRest = "skipRest"
     public static let lifetimeGain = "lifetimeGain"
+    public static let gym = "gym"
+    public static let wall = "wall"
+    public static let wallPhotos = "wallPhotos"
+    public static let color = "color"
+    public static let routeLabel = "routeLabel"
+}
+
+/// One problem on the current set. Pins die when the wall is reset; send
+/// history keeps wall + grade + date.
+public struct WatchRoutePin: Equatable, Sendable, Codable, Identifiable {
+    public var id: String
+    public var grade: String
+    public var color: String
+    public var x: Double
+    public var y: Double
+    public var discipline: String
+
+    public init(
+        id: String = UUID().uuidString,
+        grade: String,
+        color: String,
+        x: Double,
+        y: Double,
+        discipline: String = ClimbDiscipline.boulder.rawValue
+    ) {
+        self.id = id
+        self.grade = grade
+        self.color = color
+        let clamped = GymJoinMath.clampPin(x: x, y: y)
+        self.x = clamped.x
+        self.y = clamped.y
+        self.discipline = discipline
+    }
+
+    public var holdColor: HoldColor {
+        HoldColor(rawValue: color) ?? .blue
+    }
+
+    public var disciplineValue: ClimbDiscipline {
+        ClimbDiscipline(rawValue: discipline) ?? .boulder
+    }
+
+    public var label: String {
+        "\(holdColor.displayName) \(grade)"
+    }
+}
+
+/// A wall on the Watch map: durable name plus today's pins.
+public struct WatchWall: Equatable, Sendable, Codable, Identifiable {
+    public var name: String
+    public var routes: [WatchRoutePin]
+
+    public var id: String { name }
+
+    public init(name: String, routes: [WatchRoutePin] = []) {
+        self.name = name
+        self.routes = routes
+    }
+}
+
+/// Phone → Watch: the gym you're at, its walls, and the current set's pins.
+/// Walls persist across route resets; pins do not.
+public struct WatchGymContext: Equatable, Sendable, Codable {
+    public var gymName: String?
+    public var walls: [WatchWall]
+    public var currentWall: String?
+
+    public init(gymName: String? = nil, walls: [WatchWall] = [], currentWall: String? = nil) {
+        self.gymName = gymName
+        self.walls = walls
+        self.currentWall = currentWall
+    }
+
+    public static let empty = WatchGymContext()
+
+    public var wallNames: [String] { walls.map(\.name) }
+
+    public func wall(named name: String?) -> WatchWall? {
+        guard let name else { return nil }
+        return walls.first { $0.name == name }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case gymName, walls, currentWall
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        gymName = try container.decodeIfPresent(String.self, forKey: .gymName)
+        currentWall = try container.decodeIfPresent(String.self, forKey: .currentWall)
+        if let rich = try? container.decode([WatchWall].self, forKey: .walls) {
+            walls = rich
+        } else if let names = try? container.decode([String].self, forKey: .walls) {
+            walls = names.map { WatchWall(name: $0) }
+        } else {
+            walls = []
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(gymName, forKey: .gymName)
+        try container.encode(walls, forKey: .walls)
+        try container.encodeIfPresent(currentWall, forKey: .currentWall)
+    }
+
+    /// Use a new phone-map selection when it changes. Otherwise keep the Watch
+    /// pick if that wall still exists after a set reset.
+    public static func pickWall(
+        walls: [String],
+        phoneCurrent: String?,
+        previousPhoneCurrent: String?,
+        watchWall: String?
+    ) -> String? {
+        if let phoneCurrent, walls.contains(phoneCurrent), phoneCurrent != previousPhoneCurrent {
+            return phoneCurrent
+        }
+        if let watchWall, walls.contains(watchWall) {
+            return watchWall
+        }
+        if let phoneCurrent, walls.contains(phoneCurrent) {
+            return phoneCurrent
+        }
+        return walls.first
+    }
 }
 
 /// One climb row mirrored onto the Watch.

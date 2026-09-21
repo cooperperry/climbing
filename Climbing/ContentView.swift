@@ -20,7 +20,7 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .modelContainer(
-            for: [ClimbSession.self, ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self],
+            for: [ClimbSession.self, ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self, GymRoute.self],
             inMemory: true
         )
 }

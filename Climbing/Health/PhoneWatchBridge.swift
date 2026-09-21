@@ -95,19 +95,24 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
 
     func publishSnapshot() {
         guard let context, let data = try? JSONEncoder().encode(makeSnapshot(in: context)) else { return }
-        let message: [String: Any] = [
+        let gymData = (try? JSONEncoder().encode(gymContext(in: context))) ?? Data()
+        let contextMessage: [String: Any] = [
             WatchSync.kind: WatchSync.snapshot,
             WatchSync.payload: data,
             WatchSync.lifetimeGain: lifetimeGain(in: context),
+            WatchSync.gym: gymData,
         ]
-        try? session?.updateApplicationContext(message)
-        if session?.isReachable == true {
-            session?.sendMessage(
-                message,
-                replyHandler: { _ in },
-                errorHandler: { _ in }
-            )
+        try? session?.updateApplicationContext(contextMessage)
+        guard session?.isReachable == true else { return }
+        var live = contextMessage
+        if let photos = try? JSONEncoder().encode(wallPhotos(in: context)) {
+            live[WatchSync.wallPhotos] = photos
         }
+        session?.sendMessage(
+            live,
+            replyHandler: { _ in },
+            errorHandler: { _ in }
+        )
     }
 
     // MARK: - Incoming Watch commands
@@ -228,6 +233,20 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         selectedGrade = grade
         let previousLogAt = session.logs.map(\.loggedAt).max()
         let gym = currentGym(in: context)
+        let wall = (message[WatchSync.wall] as? String)
+            .flatMap { name in
+                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            ?? gym?.currentWallName
+        if let gym, let wall {
+            gym.currentWallName = wall
+        }
+        let colorName = message[WatchSync.color] as? String
+        let routeLabel = (message[WatchSync.routeLabel] as? String)
+            ?? colorName.flatMap { name in
+                HoldColor(rawValue: name).map { "\($0.displayName) \(grade)" }
+            }
         let entry = ClimbLog(
             gradeLabel: grade,
             attempts: outcome == .flash ? 1 : (outcome == .send ? 2 : 1),
@@ -235,6 +254,8 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             style: style,
             discipline: discipline,
             gym: gym,
+            areaName: wall,
+            routeLabel: routeLabel,
             session: session,
             gradeScale: scale
         )
@@ -328,6 +349,45 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         )
         descriptor.fetchLimit = 1
         return try? context.fetch(descriptor).first
+    }
+
+    private func gymContext(in context: ModelContext) -> WatchGymContext {
+        guard let gym = currentGym(in: context) else { return .empty }
+        let areas = gym.areas.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let walls = areas.map { area in
+            WatchWall(
+                name: area.name,
+                routes: area.routes
+                    .sorted { $0.createdAt < $1.createdAt }
+                    .map {
+                        WatchRoutePin(
+                            id: $0.id.uuidString,
+                            grade: $0.grade,
+                            color: $0.colorName,
+                            x: $0.x,
+                            y: $0.y,
+                            discipline: $0.disciplineRaw
+                        )
+                    }
+            )
+        }
+        let current = WatchGymContext.pickWall(
+            walls: walls.map(\.name),
+            phoneCurrent: gym.currentWallName,
+            previousPhoneCurrent: nil,
+            watchWall: gym.currentWallName
+        )
+        return WatchGymContext(gymName: gym.name, walls: walls, currentWall: current)
+    }
+
+    private func wallPhotos(in context: ModelContext) -> [String: Data] {
+        guard let gym = currentGym(in: context) else { return [:] }
+        var photos: [String: Data] = [:]
+        for area in gym.areas {
+            guard let data = area.photoData, let thumb = WallPhotoSync.thumbnail(data) else { continue }
+            photos[area.name] = thumb
+        }
+        return photos
     }
 
     private func lifetimeGain(in context: ModelContext) -> Double {

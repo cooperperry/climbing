@@ -103,23 +103,26 @@ struct GymListView: View {
         for other in gyms { other.isCurrent = false }
         context.insert(gym)
         try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
     }
 
     private func setCurrent(_ gym: ClimbGym) {
         for item in gyms { item.isCurrent = (item.id == gym.id) }
         try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
     }
 
     private func leave(_ gym: ClimbGym) {
         context.delete(gym)
         try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
     }
 }
 
 #Preview {
     GymListView()
         .modelContainer(
-            for: [ClimbGym.self, GymArea.self, ClimbLog.self, ClimbingSession.self, CustomGradeScale.self],
+            for: [ClimbGym.self, GymArea.self, GymRoute.self, ClimbLog.self, ClimbingSession.self, CustomGradeScale.self],
             inMemory: true
         )
 }
