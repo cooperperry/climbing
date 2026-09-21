@@ -330,7 +330,6 @@ struct WatchLogPage: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(manager.isLocked)
             }
 
             if let latest = manager.loggedSends.first {
@@ -354,7 +353,6 @@ struct WatchLogPage: View {
         .background(selected ? tint : Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
         .foregroundStyle(selected ? .black : .white)
         .buttonStyle(.plain)
-        .disabled(manager.isLocked)
     }
 
     private func watchSendCaption(_ send: SessionSend) -> String {
@@ -431,17 +429,12 @@ struct WatchControlsPage: View {
             Button("End Workout", role: .destructive) { confirmEnd = true }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
-                .disabled(manager.isLocked)
 
             Button(manager.isPaused ? "Resume" : "Pause") {
                 if manager.isPaused { manager.resume() } else { manager.pause() }
             }
             .tint(.yellow)
             .buttonStyle(.borderedProminent)
-            .disabled(manager.isLocked)
-
-            Button("Lock") { manager.lock() }
-                .disabled(manager.isLocked)
         }
         .font(.headline)
         .navigationTitle("End")

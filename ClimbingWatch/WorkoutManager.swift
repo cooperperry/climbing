@@ -13,7 +13,6 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
 
     var isRunning = false
     var isPaused = false
-    var isLocked = false
     var startDate: Date?
     var elapsed: TimeInterval = 0
     var verticalGainMeters = 0.0
@@ -118,7 +117,6 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             isRunning = true
         }
         isPaused = false
-        isLocked = false
         sessionID = UUID()
         let now = Date()
         startDate = now
@@ -174,11 +172,6 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         startAltimeter()
     }
 
-    func lock() {
-        isLocked = true
-        WKExtension.shared().enableWaterLock()
-    }
-
     func end() async {
         tickTask?.cancel()
         tickTask = nil
@@ -197,7 +190,6 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         stopSensors()
         isRunning = false
         isPaused = false
-        isLocked = false
         startDate = nil
         send(payload, kind: SummitSync.workoutSummary)
     }
