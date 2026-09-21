@@ -10,7 +10,7 @@ final class ClimbingModelTests: XCTestCase {
     private func makeContext() throws -> ModelContext {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(
-            for: ClimbingSession.self, ClimbLog.self, CustomGradeScale.self,
+            for: ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self,
             configurations: config
         )
         return ModelContext(container)
@@ -211,5 +211,26 @@ final class ClimbingModelTests: XCTestCase {
         XCTAssertEqual(fetched.heartRateSeries, samples)
         XCTAssertEqual(fetched.totalElevationGain, 120)
         XCTAssertEqual(fetched.payload.activeCalories, 220)
+    }
+
+    func testJoinGymAndLogSendOnAWall() throws {
+        let context = try makeContext()
+        let gym = ClimbGym(name: "Movement RiNo", isCurrent: true)
+        context.insert(gym)
+        let cave = GymArea(name: "Cave", x: 0.3, y: 0.4, gym: gym)
+        context.insert(cave)
+        let log = ClimbLog(
+            gradeLabel: "V4",
+            outcome: .send,
+            gym: gym,
+            areaName: cave.name
+        )
+        context.insert(log)
+        try context.save()
+
+        XCTAssertEqual(gym.areas.count, 1)
+        XCTAssertEqual(gym.logs.count, 1)
+        XCTAssertEqual(log.areaName, "Cave")
+        XCTAssertTrue(GymJoinMath.namesMatch(gym.name, "movement rino"))
     }
 }

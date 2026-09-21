@@ -44,6 +44,13 @@ final class ClimbLog {
     /// Discipline for display; untagged / legacy logs count as bouldering.
     var resolvedDiscipline: ClimbDiscipline { discipline ?? .boulder }
 
+    /// Gym this go was logged at. Optional so older rows migrate as `nil`.
+    var gym: ClimbGym?
+
+    /// Wall / sector name on that gym's map. Kept as text so the log survives
+    /// if the pin is later deleted.
+    var areaName: String?
+
     var loggedAt: Date
 
     /// Encoded `EffortTrace` for a send/flash (Watch motion + HR overlay).
@@ -72,6 +79,8 @@ final class ClimbLog {
         style: ClimbStyle? = nil,
         angle: ClimbAngle? = nil,
         discipline: ClimbDiscipline? = nil,
+        gym: ClimbGym? = nil,
+        areaName: String? = nil,
         session: ClimbingSession? = nil,
         gradeScale: CustomGradeScale? = nil,
         loggedAt: Date = .now
@@ -82,6 +91,8 @@ final class ClimbLog {
         self.style = style
         self.angle = angle
         self.discipline = discipline
+        self.gym = gym
+        self.areaName = areaName
         self.session = session
         self.gradeScale = gradeScale
         self.loggedAt = loggedAt

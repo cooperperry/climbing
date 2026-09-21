@@ -337,6 +337,6 @@ private extension View {
 
 #Preview {
     StatsView()
-        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbSession.self],
+        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbSession.self, ClimbGym.self, GymArea.self],
                         inMemory: true)
 }

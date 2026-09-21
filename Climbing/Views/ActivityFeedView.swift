@@ -317,7 +317,7 @@ struct PhoneBPMSparkline: View {
 #Preview {
     ActivityFeedView()
         .modelContainer(
-            for: [ClimbSession.self, ClimbLog.self, ClimbingSession.self, CustomGradeScale.self],
+            for: [ClimbSession.self, ClimbLog.self, ClimbingSession.self, CustomGradeScale.self, ClimbGym.self, GymArea.self],
             inMemory: true
         )
 }

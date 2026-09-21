@@ -19,6 +19,9 @@ struct RouteLogView: View {
     @Query(sort: \CustomGradeScale.createdAt)
     private var scales: [CustomGradeScale]
 
+    @Query(sort: \ClimbGym.joinedAt, order: .reverse)
+    private var gyms: [ClimbGym]
+
     @State private var discipline: ClimbDiscipline = .boulder
     @State private var selectedGrade: String?
     @State private var sendTrigger = 0
@@ -32,6 +35,7 @@ struct RouteLogView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
+                    currentGymBanner
                     disciplinePicker
                     gradePicker
                     logActions
@@ -45,6 +49,26 @@ struct RouteLogView: View {
                 selectedGrade = scale?.grades.first
             }
             .sensoryFeedback(.success, trigger: sendTrigger)
+        }
+    }
+
+    private var currentGym: ClimbGym? { gyms.first(where: \.isCurrent) }
+
+    @ViewBuilder
+    private var currentGymBanner: some View {
+        if let gym = currentGym {
+            HStack {
+                Image(systemName: "building.2.fill")
+                Text("At \(gym.name)")
+                    .font(.subheadline.bold())
+                Spacer()
+            }
+            .padding(12)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        } else {
+            Text("Join a gym on the Gyms tab to tag these sends to a wall map.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -200,6 +224,7 @@ struct RouteLogView: View {
             attempts: attempts,
             outcome: outcome,
             discipline: discipline,
+            gym: currentGym,
             session: todaySession(),
             gradeScale: scale
         )
@@ -238,5 +263,5 @@ struct RouteLogView: View {
 
 #Preview {
     RouteLogView()
-        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self], inMemory: true)
+        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbGym.self, GymArea.self], inMemory: true)
 }

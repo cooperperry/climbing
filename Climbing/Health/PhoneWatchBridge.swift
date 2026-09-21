@@ -227,12 +227,14 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         if let style { selectedStyle = style }
         selectedGrade = grade
         let previousLogAt = session.logs.map(\.loggedAt).max()
+        let gym = currentGym(in: context)
         let entry = ClimbLog(
             gradeLabel: grade,
             attempts: outcome == .flash ? 1 : (outcome == .send ? 2 : 1),
             outcome: outcome,
             style: style,
             discipline: discipline,
+            gym: gym,
             session: session,
             gradeScale: scale
         )
@@ -318,6 +320,14 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             context.insert(CustomGradeScale(template: .standardYDS()))
         }
         try? context.save()
+    }
+
+    private func currentGym(in context: ModelContext) -> ClimbGym? {
+        var descriptor = FetchDescriptor<ClimbGym>(
+            predicate: #Predicate { $0.isCurrent == true }
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
 
     private func lifetimeGain(in context: ModelContext) -> Double {

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Apple Workout-style paged session. Page 1 is the glance: HR, graph, calories, gain.
+/// Apple Workout-style paged session. Swipe down once from Now to end.
 struct WatchWorkoutView: View {
     @State private var manager = WorkoutManager.shared
     @State private var confirmEnd = false
@@ -9,13 +9,12 @@ struct WatchWorkoutView: View {
         if manager.isRunning || manager.isPaused {
             TabView {
                 WatchMetricsPage(manager: manager)
-                WatchLogPage(manager: manager)
-                WatchLandmarkPage(manager: manager)
-                WatchStrainPage(manager: manager)
                 WatchControlsPage(
                     manager: manager,
                     confirmEnd: $confirmEnd
                 )
+                WatchLogPage(manager: manager)
+                WatchStrainPage(manager: manager)
             }
             .tabViewStyle(.verticalPage)
             .confirmationDialog("End workout?", isPresented: $confirmEnd, titleVisibility: .visible) {
@@ -287,65 +286,6 @@ struct WatchLogPage: View {
     }
 }
 
-struct WatchLandmarkPage: View {
-    var manager: WorkoutManager
-
-    var body: some View {
-        let progress = manager.landmarkProgress
-        let remainingFt = Int((progress.remainingMeters / 0.3048).rounded())
-        VStack(spacing: 6) {
-            Gauge(value: progress.lapPercent) {
-                Text(progress.landmark.name)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            } currentValueLabel: {
-                Text("\(Int((progress.lapPercent * 100).rounded()))%")
-                    .font(.headline.monospacedDigit())
-            }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .tint(.green)
-
-            Text("\(remainingFt) ft to \(shortLandmarkName(progress.landmark))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-
-            HStack {
-                VStack {
-                    Text(ElevationFormat.gain(meters: manager.verticalGainMeters))
-                        .font(.caption.bold().monospacedDigit())
-                    Text("SESSION")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                VStack {
-                    Text(ElevationFormat.gain(meters: manager.lifetimeGainMeters))
-                        .font(.caption.bold().monospacedDigit())
-                    Text("LIFETIME")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .navigationTitle("Landmark")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func shortLandmarkName(_ landmark: Landmark) -> String {
-        switch landmark.name {
-        case Landmark.empireState.name: return "Empire State"
-        case Landmark.elCapitan.name: return "El Cap"
-        case Landmark.halfDome.name: return "Half Dome"
-        case Landmark.everest.name: return "Everest"
-        default: return landmark.name
-        }
-    }
-}
-
 struct WatchStrainPage: View {
     var manager: WorkoutManager
 
@@ -409,7 +349,12 @@ struct WatchControlsPage: View {
     @Binding var confirmEnd: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
+            Button("End Workout", role: .destructive) { confirmEnd = true }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(manager.isLocked)
+
             Button(manager.isPaused ? "Resume" : "Pause") {
                 if manager.isPaused { manager.resume() } else { manager.pause() }
             }
@@ -417,14 +362,11 @@ struct WatchControlsPage: View {
             .buttonStyle(.borderedProminent)
             .disabled(manager.isLocked)
 
-            Button("End Workout", role: .destructive) { confirmEnd = true }
-                .disabled(manager.isLocked)
-
             Button("Lock") { manager.lock() }
                 .disabled(manager.isLocked)
         }
         .font(.headline)
-        .navigationTitle("Session")
+        .navigationTitle("End")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
