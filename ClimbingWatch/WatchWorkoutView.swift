@@ -34,6 +34,7 @@ struct WatchWorkoutView: View {
                 onStart: { manager.startFromButton() }
             )
             .toolbar(.hidden, for: .navigationBar)
+            .onAppear { manager.ensureIdle() }
         }
     }
 }

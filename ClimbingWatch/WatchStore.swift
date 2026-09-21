@@ -22,7 +22,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
         WCSession.isSupported() ? .default : nil
     }
 
-    var liveBPM: Int? { WatchWorkoutController.shared.currentBPM }
+    var liveBPM: Int? { WorkoutManager.shared.currentBPM }
 
     var grades: [String] {
         let list = snapshot.grades
@@ -46,7 +46,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
         }
         selectedGrade = selectedGrade ?? snapshot.selectedGrade ?? snapshot.grades.first
         send([WatchSync.kind: WatchSync.start])
-        Task { await WatchWorkoutController.shared.start() }
+        Task { await WorkoutManager.shared.start() }
     }
 
     func endSession() {
@@ -54,15 +54,15 @@ final class WatchStore: NSObject, WCSessionDelegate {
         snapshot.isActive = false
         snapshot.startTime = nil
         restPlan = nil
-        Task { await WatchWorkoutController.shared.stop() }
+        Task { await WorkoutManager.shared.end() }
     }
 
     func log(outcome: ClimbOutcome) {
         guard let grade = selectedGrade ?? snapshot.selectedGrade else { return }
         let plan = RecoveryMath.plan(
             at: Date(),
-            heartRates: WatchWorkoutController.shared.recentHeartRates(seconds: RecoveryMath.effortWindow),
-            currentBPM: WatchWorkoutController.shared.currentBPM
+            heartRates: WorkoutManager.shared.heartRates,
+            currentBPM: WorkoutManager.shared.currentBPM
         )
         restPlan = plan
         skippedRestID = nil
@@ -74,15 +74,15 @@ final class WatchStore: NSObject, WCSessionDelegate {
         if let wall = WorkoutManager.shared.logWall {
             message[WatchSync.wall] = wall
         }
-        if let data = try? JSONEncoder().encode(WatchWorkoutController.shared.recentHeartRates()) {
+        if let data = try? JSONEncoder().encode(Array(WorkoutManager.shared.heartRates.suffix(40))) {
             message[WatchSync.heartRates] = data
         }
         if let data = try? JSONEncoder().encode(plan) {
             message[WatchSync.rest] = data
         }
-        if outcome.isCompletion, !WatchWorkoutController.shared.recentHeartRates().isEmpty {
+        if outcome.isCompletion, !WorkoutManager.shared.heartRates.isEmpty {
             snapshot.lastTrace = EffortMath.trace(
-                heartRates: WatchWorkoutController.shared.recentHeartRates(),
+                heartRates: Array(WorkoutManager.shared.heartRates.suffix(40)),
                 start: Date().addingTimeInterval(-EffortWindow.maximum),
                 end: .now
             )
@@ -119,7 +119,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
         let phase = RecoveryMath.phase(
             plan: plan,
             now: now,
-            currentBPM: WatchWorkoutController.shared.currentBPM ?? liveBPM
+            currentBPM: WorkoutManager.shared.currentBPM ?? liveBPM
         )
         if phase.isFinished, lastReadyHaptic != plan.id {
             lastReadyHaptic = plan.id
@@ -128,7 +128,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
     }
 
     func broadcastBPM() {
-        guard let bpm = WatchWorkoutController.shared.currentBPM else { return }
+        guard let bpm = WorkoutManager.shared.currentBPM else { return }
         send([WatchSync.kind: WatchSync.bpm, WatchSync.value: bpm])
     }
 
@@ -227,10 +227,10 @@ final class WatchStore: NSObject, WCSessionDelegate {
             self.ingestPhoneContext(message)
             let kind = message[WatchSync.kind] as? String
             if kind == WatchSync.start {
-                await WatchWorkoutController.shared.start()
+                await WorkoutManager.shared.start()
             }
             if kind == WatchSync.stop {
-                await WatchWorkoutController.shared.stop()
+                await WorkoutManager.shared.end()
             }
             if kind == WatchSync.skipRest {
                 self.skipRest(notifyPhone: false)
@@ -250,14 +250,14 @@ final class WatchStore: NSObject, WCSessionDelegate {
                 let from = message[WatchSync.from] as? TimeInterval ?? 0
                 let to = message[WatchSync.to] as? TimeInterval ?? 0
                 let payload = (try? JSONEncoder().encode(
-                    WatchWorkoutController.shared.heartRates(from: from, to: to)
+                    WorkoutManager.shared.heartRateSamples(from: from, to: to)
                 )) ?? Data()
                 replyHandler([WatchSync.heartRates: payload])
             case WatchSync.start:
-                await WatchWorkoutController.shared.start()
+                await WorkoutManager.shared.start()
                 replyHandler([:])
             case WatchSync.stop:
-                await WatchWorkoutController.shared.stop()
+                await WorkoutManager.shared.end()
                 replyHandler([:])
             case WatchSync.skipRest:
                 self.skipRest(notifyPhone: false)

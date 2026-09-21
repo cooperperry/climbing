@@ -68,8 +68,8 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     private let store = HKHealthStore()
     private var workout: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
-    private let altimeter = CMAltimeter()
-    private let motion = CMMotionManager()
+    private var altimeter: CMAltimeter?
+    private var motion: CMMotionManager?
     private var filter = ElevationFilter()
     private var gainTimeline: [(t: TimeInterval, gain: Double)] = []
     private var zoneSeconds: [HeartRateZone: TimeInterval] = [:]
@@ -99,11 +99,6 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         super.init()
     }
 
-    func prepare() {
-        WatchCueNotifier.requestAuthorization()
-        Task { await authorize() }
-    }
-
     func startFromButton() {
         guard !isRunning, !isStarting else { return }
         isStarting = true
@@ -124,6 +119,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         resetLiveState()
         startTicker()
         broadcastLive()
+        WatchCueNotifier.requestAuthorization()
         await authorize()
         if workout != nil {
             await finishWorkout()
@@ -157,7 +153,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         isPaused = true
         pauseStartedAt = Date()
         workout?.pause()
-        altimeter.stopRelativeAltitudeUpdates()
+        stopSensors()
     }
 
     func resume() {
@@ -170,6 +166,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         lastTick = Date()
         workout?.resume()
         startAltimeter()
+        startMotion()
     }
 
     func end() async {
@@ -192,6 +189,22 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         isPaused = false
         startDate = nil
         send(payload, kind: SummitSync.workoutSummary)
+    }
+
+    /// Drop leftover HealthKit / motion if the Start screen is showing.
+    func ensureIdle() {
+        guard !isRunning, !isStarting else { return }
+        tickTask?.cancel()
+        tickTask = nil
+        stopSensors()
+        Task {
+            await finishWorkout()
+            await WatchWorkoutController.shared.stop()
+        }
+    }
+
+    func heartRateSamples(from start: TimeInterval, to end: TimeInterval) -> [HeartRateSample] {
+        heartRates.filter { $0.timestamp >= start && $0.timestamp <= end }
     }
 
     func selectLogDiscipline(_ item: ClimbDiscipline) {
@@ -334,7 +347,9 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
 
     private func startAltimeter() {
         guard CMAltimeter.isRelativeAltitudeAvailable() else { return }
-        altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, _ in
+        let sensor = altimeter ?? CMAltimeter()
+        altimeter = sensor
+        sensor.startRelativeAltitudeUpdates(to: .main) { [weak self] data, _ in
             guard let self, let data, self.isRunning, !self.isPaused else { return }
             let meters = data.relativeAltitude.doubleValue
             let moving = self.motionVariance >= StrainMath.climbingMotionThreshold
@@ -352,9 +367,11 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     }
 
     private func startMotion() {
-        guard motion.isDeviceMotionAvailable else { return }
-        motion.deviceMotionUpdateInterval = 0.2
-        motion.startDeviceMotionUpdates(to: .main) { [weak self] data, _ in
+        let sensor = motion ?? CMMotionManager()
+        guard sensor.isDeviceMotionAvailable else { return }
+        motion = sensor
+        sensor.deviceMotionUpdateInterval = 0.2
+        sensor.startDeviceMotionUpdates(to: .main) { [weak self] data, _ in
             guard let self, let data, self.isRunning, !self.isPaused else { return }
             let acc = data.userAcceleration
             let mag = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z)
@@ -367,8 +384,10 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     }
 
     private func stopSensors() {
-        altimeter.stopRelativeAltitudeUpdates()
-        motion.stopDeviceMotionUpdates()
+        altimeter?.stopRelativeAltitudeUpdates()
+        motion?.stopDeviceMotionUpdates()
+        altimeter = nil
+        motion = nil
     }
 
     private func startTicker() {
