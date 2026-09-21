@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Apple Workout-style paged session. Swipe down once from Now to end.
+/// Apple Workout-style session: swipe down through Now, Send, Effort;
+/// swipe left for End.
 struct WatchWorkoutView: View {
     @State private var manager = WorkoutManager.shared
     @State private var confirmEnd = false
@@ -8,15 +9,19 @@ struct WatchWorkoutView: View {
     var body: some View {
         if manager.isRunning || manager.isPaused {
             TabView {
-                WatchMetricsPage(manager: manager)
+                TabView {
+                    WatchMetricsPage(manager: manager)
+                    WatchLogPage(manager: manager)
+                    WatchStrainPage(manager: manager)
+                }
+                .tabViewStyle(.verticalPage)
+
                 WatchControlsPage(
                     manager: manager,
                     confirmEnd: $confirmEnd
                 )
-                WatchLogPage(manager: manager)
-                WatchStrainPage(manager: manager)
             }
-            .tabViewStyle(.verticalPage)
+            .tabViewStyle(.page)
             .confirmationDialog("End workout?", isPresented: $confirmEnd, titleVisibility: .visible) {
                 Button("End Workout", role: .destructive) {
                     Task { await manager.end() }
