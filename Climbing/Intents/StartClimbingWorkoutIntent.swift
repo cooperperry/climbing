@@ -65,6 +65,26 @@ struct StartClimbingWorkoutIntent: AppIntent {
     }
 }
 
+struct EndClimbingWorkoutIntent: AppIntent {
+    static var title: LocalizedStringResource = "End Climbing Workout"
+    static var description = IntentDescription(
+        "Ends the current climbing session and the Watch workout."
+    )
+    static var openAppWhenRun: Bool { true }
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("End climbing workout")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        if PhoneWatchBridge.shared.endClimbingWorkout() {
+            return .result(dialog: "Ended climbing workout.")
+        }
+        return .result(dialog: "No climbing workout was running.")
+    }
+}
+
 struct ClimberShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -76,6 +96,16 @@ struct ClimberShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Start Workout",
             systemImageName: "figure.climbing"
+        )
+        AppShortcut(
+            intent: EndClimbingWorkoutIntent(),
+            phrases: [
+                "End a climbing workout in \(.applicationName)",
+                "Stop climbing with \(.applicationName)",
+                "End a session in \(.applicationName)",
+            ],
+            shortTitle: "End Workout",
+            systemImageName: "stop.circle.fill"
         )
     }
 }

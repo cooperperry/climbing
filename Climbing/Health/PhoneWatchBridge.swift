@@ -49,6 +49,18 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         send([WatchSync.kind: WatchSync.start])
     }
 
+    /// Ends the phone session and the Watch workout. Used by Shortcuts.
+    @discardableResult
+    func endClimbingWorkout() -> Bool {
+        var ended = false
+        if let context {
+            ended = activeSession(in: context) != nil
+            endSession(in: context)
+        }
+        stopWatchSide()
+        return ended
+    }
+
     func gymEntities(matching ids: [UUID]? = nil) -> [GymEntity] {
         guard let context else { return [] }
         let gyms = (try? context.fetch(
