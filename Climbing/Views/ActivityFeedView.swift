@@ -57,7 +57,7 @@ struct ActivityFeedView: View {
                     ContentUnavailableView {
                         Label("No sessions yet", systemImage: "figure.climbing")
                     } description: {
-                        Text("Start a climb on Watch, or log a top on Routes. Each workout is its own session.")
+                        Text("Start a climb on Watch, or log a top on Routes. Height toward El Cap stacks across sessions.")
                     }
                 } else {
                     ScrollView {

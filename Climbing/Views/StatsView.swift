@@ -10,6 +10,13 @@ struct StatsView: View {
     @Query(sort: \ClimbingSession.startTime, order: .reverse)
     private var sessions: [ClimbingSession]
 
+    @Query(sort: \ClimbSession.startDate, order: .reverse)
+    private var workouts: [ClimbSession]
+
+    private var lifetimeGain: Double {
+        workouts.filter { $0.endDate != nil }.reduce(0) { $0 + $1.totalElevationGain }
+    }
+
     private var totalPoints: Int {
         logs.reduce(0) { $0 + $1.points }
     }
@@ -24,16 +31,21 @@ struct StatsView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if logs.isEmpty {
+                if logs.isEmpty && lifetimeGain == 0 {
                     emptyState
                 } else {
                     ScrollView {
                         VStack(spacing: 16) {
-                            levelCard
-                            statGrid
-                            styleCard
-                            pyramidCard
-                            recentSessionsCard
+                            if !logs.isEmpty {
+                                levelCard
+                                statGrid
+                                styleCard
+                                pyramidCard
+                                recentSessionsCard
+                            }
+                            if lifetimeGain > 0 {
+                                landmarkCard
+                            }
                         }
                         .padding()
                     }
@@ -49,7 +61,7 @@ struct StatsView: View {
         ContentUnavailableView {
             Label("No Stats Yet", systemImage: "chart.bar")
         } description: {
-            Text("Log a top on the Routes tab. A Watch is optional.")
+            Text("Log a top on the Routes tab, or start a Watch climb. Height toward El Cap stacks across sessions.")
         }
     }
 
@@ -238,6 +250,49 @@ struct StatsView: View {
         }
     }
 
+    // MARK: - Lifetime height
+
+    @ViewBuilder
+    private var landmarkCard: some View {
+        let target = LandmarkMath.sessionTarget(gainMeters: lifetimeGain)
+        let progress = LandmarkMath.progress(gainMeters: lifetimeGain, toward: target)
+        let remainingFt = Int((progress.remainingMeters / 0.3048).rounded())
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Lifetime height")
+                .font(.headline)
+            Text("Keeps going across sessions — El Cap is thousands of gym goes.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(target.name)
+                        .font(.subheadline.bold())
+                    Text("\(remainingFt) ft to go")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(ElevationFormat.gain(meters: lifetimeGain))
+                    .font(.title3.bold().monospacedDigit())
+            }
+            ProgressView(value: progress.lapPercent)
+                .tint(.stravaOrange)
+            ForEach(Landmark.all) { landmark in
+                let done = landmark.completions(gainMeters: lifetimeGain)
+                HStack {
+                    Text(landmark.name)
+                        .font(.caption)
+                    Spacer()
+                    Text(String(format: "%.1f×", done))
+                        .font(.caption.bold().monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
     // MARK: - Recent sessions
 
     @ViewBuilder
@@ -282,6 +337,6 @@ private extension View {
 
 #Preview {
     StatsView()
-        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self],
+        .modelContainer(for: [ClimbingSession.self, ClimbLog.self, CustomGradeScale.self, ClimbSession.self],
                         inMemory: true)
 }

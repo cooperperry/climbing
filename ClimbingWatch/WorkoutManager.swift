@@ -34,11 +34,28 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
     var loggedSends: [SessionSend] = []
     var logDiscipline: ClimbDiscipline = .boulder
     var logGrade: String = "V4"
+    var priorLifetimeGain = 0.0
+    var warmupComplete = false
+    var restPlan: RestPlan?
+
+    var lifetimeGainMeters: Double {
+        LifetimeGainMath.total(persisted: priorLifetimeGain, session: verticalGainMeters)
+    }
 
     var landmarkProgress: LandmarkProgress {
         LandmarkMath.progress(
-            gainMeters: verticalGainMeters,
-            toward: LandmarkMath.sessionTarget(gainMeters: verticalGainMeters)
+            gainMeters: lifetimeGainMeters,
+            toward: LandmarkMath.sessionTarget(gainMeters: lifetimeGainMeters)
+        )
+    }
+
+    func cue(at now: Date = Date()) -> WorkoutCue {
+        WorkoutCueMath.cue(
+            warmupComplete: warmupComplete,
+            showWarmedUpUntil: warmupBannerUntil,
+            restPlan: restPlan,
+            currentBPM: currentBPM,
+            now: now
         )
     }
 
@@ -66,12 +83,18 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         .topRope: "5.10a",
         .lead: "5.10a",
     ]
+    private var warmupBannerUntil: Date?
+    private var didAnnounceWarmup = false
+    private var announcedRestID: UUID?
+    private var climbingBoutStart: Date?
+    private var lastDetectedPhase: ClimbPhase = .resting
 
     private override init() {
         super.init()
     }
 
     func prepare() {
+        WatchCueNotifier.requestAuthorization()
         Task { await authorize() }
     }
 
@@ -102,6 +125,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         }
         isRunning = true
         loadProfile()
+        loadPriorLifetimeGain()
         startAltimeter()
         startMotion()
         do {
@@ -119,6 +143,7 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             currentBPM = nil
         }
         isStarting = false
+        WatchCueNotifier.workoutStarted()
         broadcastLive()
     }
 
@@ -155,6 +180,8 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
             pausedAccumulated += endDate.timeIntervalSince(pauseStartedAt)
         }
         recompute(now: endDate)
+        LifetimeGainStore.addSession(verticalGainMeters)
+        priorLifetimeGain = LifetimeGainStore.load()
         let payload = snapshot(endDate: endDate)
         isStarting = false
         lastLiveSent = nil
@@ -195,7 +222,27 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         if let data = try? JSONEncoder().encode(Array(heartRates.suffix(40))) {
             message[WatchSync.heartRates] = data
         }
+        beginRest(at: Date())
+        if let data = try? JSONEncoder().encode(restPlan) {
+            message[WatchSync.rest] = data
+        }
         sendWatchMessage(message)
+    }
+
+    func skipRest() {
+        restPlan = nil
+        announcedRestID = nil
+        climbingBoutStart = nil
+    }
+
+    func beginRest(at date: Date = Date()) {
+        let plan = RecoveryMath.plan(
+            at: date,
+            heartRates: heartRates,
+            currentBPM: currentBPM
+        )
+        restPlan = plan
+        announcedRestID = nil
     }
 
     func snapshot(endDate: Date? = nil, live: Bool = false) -> ClimbSessionPayload {
@@ -298,9 +345,22 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         phase = detected
         if detected == .climbing {
             climbingTime += dt
+            if lastDetectedPhase != .climbing {
+                climbingBoutStart = now
+                if restPlan != nil { skipRest() }
+            }
         } else {
             restingTime += dt
+            if lastDetectedPhase == .climbing,
+               warmupComplete,
+               restPlan == nil,
+               let bout = climbingBoutStart,
+               now.timeIntervalSince(bout) >= 20 {
+                beginRest(at: now)
+            }
         }
+        lastDetectedPhase = detected
+        evaluateCues(now: now)
         if let bpm = currentBPM {
             let zone = HeartRateZone.zone(bpm: bpm, maxHR: maxHR)
             currentZone = zone
@@ -319,6 +379,37 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         }
         refreshEnergyFromBuilder()
         broadcastLive()
+    }
+
+    private func evaluateCues(now: Date) {
+        if !warmupComplete {
+            warmupComplete = WarmupMath.isComplete(
+                elapsed: elapsed,
+                climbingTime: climbingTime,
+                gainMeters: verticalGainMeters
+            )
+        }
+        if warmupComplete, !didAnnounceWarmup {
+            didAnnounceWarmup = true
+            warmupBannerUntil = now.addingTimeInterval(12)
+            WatchCueNotifier.warmupComplete()
+        }
+        if let plan = restPlan {
+            let phase = RecoveryMath.phase(plan: plan, now: now, currentBPM: currentBPM)
+            if phase.isFinished, announcedRestID != plan.id {
+                announcedRestID = plan.id
+                WatchCueNotifier.restComplete()
+            }
+        }
+    }
+
+    func adoptLifetimeGain(_ meters: Double) {
+        LifetimeGainStore.merge(meters)
+        priorLifetimeGain = max(priorLifetimeGain, LifetimeGainStore.load())
+    }
+
+    private func loadPriorLifetimeGain() {
+        priorLifetimeGain = LifetimeGainStore.load()
     }
 
     private func refreshEnergyFromBuilder() {
@@ -376,6 +467,13 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         lastLiveSent = nil
         phase = .resting
         loggedSends = []
+        warmupComplete = false
+        restPlan = nil
+        warmupBannerUntil = nil
+        didAnnounceWarmup = false
+        announcedRestID = nil
+        climbingBoutStart = nil
+        lastDetectedPhase = .resting
     }
 
     // MARK: - HealthKit

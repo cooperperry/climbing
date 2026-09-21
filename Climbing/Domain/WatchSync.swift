@@ -21,6 +21,7 @@ public enum WatchSync {
     public static let value = "value"
     public static let rest = "rest"
     public static let skipRest = "skipRest"
+    public static let lifetimeGain = "lifetimeGain"
 }
 
 /// One climb row mirrored onto the Watch.

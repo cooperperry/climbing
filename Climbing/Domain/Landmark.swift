@@ -61,7 +61,7 @@ public struct LandmarkProgress: Equatable, Sendable {
 }
 
 public enum LandmarkMath {
-    /// Smallest landmark not yet fully climbed this session; Everest once past Half Dome.
+    /// Smallest landmark not yet fully climbed for this lifetime total; Everest once past Half Dome.
     public static func sessionTarget(gainMeters: Double) -> Landmark {
         Landmark.all.first { gainMeters < $0.heightMeters } ?? .everest
     }

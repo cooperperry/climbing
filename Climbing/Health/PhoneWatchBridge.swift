@@ -95,10 +95,15 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
 
     func publishSnapshot() {
         guard let context, let data = try? JSONEncoder().encode(makeSnapshot(in: context)) else { return }
-        try? session?.updateApplicationContext([WatchSync.payload: data])
+        let message: [String: Any] = [
+            WatchSync.kind: WatchSync.snapshot,
+            WatchSync.payload: data,
+            WatchSync.lifetimeGain: lifetimeGain(in: context),
+        ]
+        try? session?.updateApplicationContext(message)
         if session?.isReachable == true {
             session?.sendMessage(
-                [WatchSync.kind: WatchSync.snapshot, WatchSync.payload: data],
+                message,
                 replyHandler: { _ in },
                 errorHandler: { _ in }
             )
@@ -163,6 +168,7 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             liveWorkout = nil
             liveReceivedAt = nil
             upsertSession(payload, throttle: false)
+            publishSnapshot()
         }
     }
 
@@ -312,6 +318,11 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             context.insert(CustomGradeScale(template: .standardYDS()))
         }
         try? context.save()
+    }
+
+    private func lifetimeGain(in context: ModelContext) -> Double {
+        let workouts = (try? context.fetch(FetchDescriptor<ClimbSession>())) ?? []
+        return workouts.filter { $0.endDate != nil }.reduce(0) { $0 + $1.totalElevationGain }
     }
 
     private func makeSnapshot(in context: ModelContext) -> WatchSnapshot {

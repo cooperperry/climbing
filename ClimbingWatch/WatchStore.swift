@@ -140,6 +140,13 @@ final class WatchStore: NSObject, WCSessionDelegate {
         }
     }
 
+    private func ingestLifetimeGain(_ message: [String: Any]) {
+        let raw = message[WatchSync.lifetimeGain]
+        let gain = (raw as? Double) ?? (raw as? NSNumber)?.doubleValue
+        guard let gain else { return }
+        WorkoutManager.shared.adoptLifetimeGain(gain)
+    }
+
     private func send(_ message: [String: Any]) {
         guard let session, session.activationState == .activated else { return }
         if session.isReachable {
@@ -165,6 +172,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
         if let data = applicationContext[WatchSync.payload] as? Data {
             Task { @MainActor in self.apply(data) }
         }
+        Task { @MainActor in self.ingestLifetimeGain(applicationContext) }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
@@ -172,6 +180,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
             if let data = message[WatchSync.payload] as? Data {
                 self.apply(data)
             }
+            self.ingestLifetimeGain(message)
             let kind = message[WatchSync.kind] as? String
             if kind == WatchSync.start {
                 await WatchWorkoutController.shared.start()
@@ -213,6 +222,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
                 if let data = message[WatchSync.payload] as? Data {
                     self.apply(data)
                 }
+                self.ingestLifetimeGain(message)
                 replyHandler([:])
             }
         }

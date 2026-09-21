@@ -103,7 +103,7 @@ struct WatchMetricsPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(manager.isPaused ? "PAUSED" : SessionClock.format(manager.elapsed))
                         .font(.caption.bold().monospacedDigit())
                         .foregroundStyle(.yellow)
@@ -118,6 +118,22 @@ struct WatchMetricsPage: View {
                         .foregroundStyle(.orange)
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
+                }
+            }
+
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let cue = manager.cue(at: context.date)
+                if cue != .none {
+                    Button {
+                        if cue.isActionable { manager.skipRest() }
+                    } label: {
+                        Text(cue.title)
+                            .font(.caption.bold())
+                            .foregroundStyle(cueColor(cue))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!cue.isActionable)
                 }
             }
 
@@ -173,6 +189,15 @@ struct WatchMetricsPage: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cueColor(_ cue: WorkoutCue) -> Color {
+        switch cue {
+        case .warmedUp, .readyToSend: return .workoutGreen
+        case .resting: return .yellow
+        case .warmingUp: return .secondary
+        case .none: return .secondary
+        }
     }
 }
 
@@ -281,9 +306,11 @@ struct WatchLandmarkPage: View {
             .gaugeStyle(.accessoryCircularCapacity)
             .tint(.green)
 
-            Text("\(remainingFt) ft to go")
+            Text("\(remainingFt) ft to \(shortLandmarkName(progress.landmark))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
 
             HStack {
                 VStack {
@@ -295,9 +322,9 @@ struct WatchLandmarkPage: View {
                 }
                 .frame(maxWidth: .infinity)
                 VStack {
-                    Text(String(format: "%.1f×", progress.completions))
+                    Text(ElevationFormat.gain(meters: manager.lifetimeGainMeters))
                         .font(.caption.bold().monospacedDigit())
-                    Text("LAPS")
+                    Text("LIFETIME")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.secondary)
                 }
@@ -306,6 +333,16 @@ struct WatchLandmarkPage: View {
         }
         .navigationTitle("Landmark")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func shortLandmarkName(_ landmark: Landmark) -> String {
+        switch landmark.name {
+        case Landmark.empireState.name: return "Empire State"
+        case Landmark.elCapitan.name: return "El Cap"
+        case Landmark.halfDome.name: return "Half Dome"
+        case Landmark.everest.name: return "Everest"
+        default: return landmark.name
+        }
     }
 }
 
