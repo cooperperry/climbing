@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppIntents
 
 /// Join or create a gym, then open its map to drop walls and log sends.
 struct GymListView: View {
@@ -104,18 +105,21 @@ struct GymListView: View {
         context.insert(gym)
         try? context.save()
         PhoneWatchBridge.shared.publishSnapshot()
+        ClimberShortcuts.updateAppShortcutParameters()
     }
 
     private func setCurrent(_ gym: ClimbGym) {
         for item in gyms { item.isCurrent = (item.id == gym.id) }
         try? context.save()
         PhoneWatchBridge.shared.publishSnapshot()
+        ClimberShortcuts.updateAppShortcutParameters()
     }
 
     private func leave(_ gym: ClimbGym) {
         context.delete(gym)
         try? context.save()
         PhoneWatchBridge.shared.publishSnapshot()
+        ClimberShortcuts.updateAppShortcutParameters()
     }
 }
 

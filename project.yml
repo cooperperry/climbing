@@ -21,6 +21,7 @@ targets:
       - path: Climbing
     dependencies:
       - sdk: HealthKit.framework
+      - sdk: AppIntents.framework
       - target: ClimbingWatch
         embed: true
     entitlements:
@@ -39,6 +40,7 @@ targets:
         INFOPLIST_KEY_NSMotionUsageDescription: "Climber uses the barometer and wrist motion to measure vertical gain and climbing vs rest."
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Climber saves photos of gym walls so you can log sends on that wall."
         INFOPLIST_KEY_NSCameraUsageDescription: "Climber takes a photo of the wall in front of you to add it to the gym map."
+        INFOPLIST_KEY_NSHealthUpdateUsageDescription: "Climber starts a Watch workout from the phone or a Shortcut when you arrive at the gym."
 
   ClimbingWatch:
     type: application

@@ -36,6 +36,37 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         publishSnapshot()
     }
 
+    /// Starts a phone session and the Watch workout. Used by Shortcuts
+    /// (Arrive at gym) as well as the in-app Start button path.
+    func startClimbingWorkout(gymID: UUID? = nil) {
+        if let context {
+            if let gymID {
+                setCurrentGym(id: gymID, in: context)
+            }
+            startSession(in: context)
+            publishSnapshot()
+        }
+        send([WatchSync.kind: WatchSync.start])
+    }
+
+    func gymEntities(matching ids: [UUID]? = nil) -> [GymEntity] {
+        guard let context else { return [] }
+        let gyms = (try? context.fetch(
+            FetchDescriptor<ClimbGym>(sortBy: [SortDescriptor(\.joinedAt, order: .reverse)])
+        )) ?? []
+        let selected = ids.map { wanted in gyms.filter { wanted.contains($0.id) } } ?? gyms
+        return selected.map { GymEntity(id: $0.id, name: $0.name) }
+    }
+
+    private func setCurrentGym(id: UUID, in context: ModelContext) {
+        let gyms = (try? context.fetch(FetchDescriptor<ClimbGym>())) ?? []
+        guard gyms.contains(where: { $0.id == id }) else { return }
+        for gym in gyms {
+            gym.isCurrent = gym.id == id
+        }
+        try? context.save()
+    }
+
     func startWatchSide() {
         send([WatchSync.kind: WatchSync.start])
         Task { await health.startWatchWorkout() }
