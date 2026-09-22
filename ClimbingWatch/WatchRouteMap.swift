@@ -3,7 +3,8 @@ import SwiftUI
 /// One wall, fitted to the watch. Other walls stay off this screen.
 struct WatchGymMap: View {
     var wall: WatchWall
-    var onSelect: (WatchRoutePin) -> Void
+    var highlightedID: String?
+    var onSelect: (WatchRoutePin) -> Void = { _ in }
 
     var body: some View {
         GeometryReader { geo in
@@ -16,16 +17,23 @@ struct WatchGymMap: View {
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
                     )
                 ForEach(placedPins(in: geo.size, project: project)) { placed in
+                    let selected = highlightedID == placed.pin.id
                     Button {
                         onSelect(placed.pin)
                     } label: {
                         Text(placed.pin.grade)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: selected ? 12 : 10, weight: .bold))
                             .foregroundStyle(placed.pin.holdColor.prefersDarkLabel ? Color.black : Color.white)
-                            .frame(minWidth: 28, minHeight: 28)
+                            .frame(minWidth: selected ? 34 : 22, minHeight: selected ? 34 : 22)
                             .background(Color(hold: placed.pin.holdColor), in: Circle())
+                            .overlay {
+                                if selected {
+                                    Circle().strokeBorder(Color.white, lineWidth: 2)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
+                    .opacity(highlightedID == nil || selected ? 1 : 0.35)
                     .position(placed.point)
                 }
             }
@@ -106,39 +114,45 @@ private struct PlacedWatchPin: Identifiable {
     var id: String { pin.id }
 }
 
-struct WatchWallPicker: View {
-    var walls: [WatchWall]
-    @Binding var index: Int
+struct WatchBoulderRow: Identifiable {
+    var wall: WatchWall
+    var pin: WatchRoutePin
+    var id: String { pin.id }
+}
+
+struct WatchBoulderDetail: View {
+    var wall: WatchWall
+    var pin: WatchRoutePin
+    var manager: WorkoutManager
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        List {
-            ForEach(Array(walls.enumerated()), id: \.element.id) { item, wall in
-                Button {
-                    index = item
+        VStack(spacing: 4) {
+            Text(wall.name)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            WatchGymMap(wall: wall, highlightedID: pin.id)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            HStack(spacing: 6) {
+                Button("Flashed") {
+                    manager.selectLogWall(wall.name)
+                    manager.logRoute(pin, outcome: .flash)
                     dismiss()
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(wall.name)
-                            Text(routeCount(wall))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if item == index {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(Color.workoutGreen)
-                        }
-                    }
                 }
+                .tint(.yellow)
+                Button("Topped") {
+                    manager.selectLogWall(wall.name)
+                    manager.logRoute(pin, outcome: .send)
+                    dismiss()
+                }
+                .tint(.green)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
-        .navigationTitle("Walls")
-    }
-
-    private func routeCount(_ wall: WatchWall) -> String {
-        let count = wall.routes.count
-        return count == 1 ? "1 route" : "\(count) routes"
+        .navigationTitle(pin.label)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

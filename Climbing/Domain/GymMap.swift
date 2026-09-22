@@ -278,37 +278,59 @@ public enum FloorPlanMath {
         hypot(a.x - b.x, a.y - b.y)
     }
 
-    /// Tip beyond the last vertex — offset matches the length of the last segment.
+    /// Short + handle just past the last vertex, kept inside the board.
+    public static let extendHandleStep: Double = 0.07
+    public static let extendHandleMargin: Double = 0.05
+
     public static func addSegmentHandle(after points: [PlanPoint], step: Double? = nil) -> PlanPoint {
-        let fallback = 0.12
         guard points.count >= 2 else {
-            return extendedPoint(after: points, step: step ?? fallback)
+            return visibleExtension(
+                from: points.first ?? PlanPoint(x: 0.5, y: 0.5),
+                dx: 1,
+                dy: 0,
+                step: step ?? extendHandleStep
+            )
         }
         let last = points[points.count - 1]
         let prev = points[points.count - 2]
-        let length = max(distance(prev, last), 0.04)
-        return extendedPoint(after: points, step: step ?? length)
+        return visibleExtension(from: last, dx: last.x - prev.x, dy: last.y - prev.y, step: step ?? extendHandleStep)
     }
 
-    /// Tip beyond the first vertex — offset matches the length of the first segment.
+    /// Short + handle just before the first vertex, kept inside the board.
     public static func addSegmentHandle(before points: [PlanPoint], step: Double? = nil) -> PlanPoint {
-        let fallback = 0.12
         guard points.count >= 2 else {
             let anchor = points.first ?? PlanPoint(x: 0.5, y: 0.5)
-            let use = step ?? fallback
-            return PlanPoint(rawX: anchor.x - use, rawY: anchor.y)
+            return visibleExtension(from: anchor, dx: -1, dy: 0, step: step ?? extendHandleStep)
         }
         let first = points[0]
         let next = points[1]
-        let length = max(distance(first, next), 0.04)
-        let use = step ?? length
-        let dx = first.x - next.x
-        let dy = first.y - next.y
+        return visibleExtension(from: first, dx: first.x - next.x, dy: first.y - next.y, step: step ?? extendHandleStep)
+    }
+
+    /// Place an extend handle `step` beyond `from` along `(dx, dy)`, pulling it back until it sits on the board.
+    public static func visibleExtension(
+        from end: PlanPoint,
+        dx: Double,
+        dy: Double,
+        step: Double = extendHandleStep,
+        margin: Double = extendHandleMargin
+    ) -> PlanPoint {
         let len = hypot(dx, dy)
-        guard len > 1e-6 else {
-            return PlanPoint(rawX: first.x - use, rawY: first.y)
+        let ux = len > 1e-6 ? dx / len : 1
+        let uy = len > 1e-6 ? dy / len : 0
+        var distance = max(step, 0.03)
+        for _ in 0 ..< 6 {
+            let x = end.x + ux * distance
+            let y = end.y + uy * distance
+            if x >= margin, x <= 1 - margin, y >= margin, y <= 1 - margin {
+                return PlanPoint(rawX: x, rawY: y)
+            }
+            distance *= 0.55
         }
-        return PlanPoint(rawX: first.x + dx / len * use, rawY: first.y + dy / len * use)
+        return PlanPoint(
+            x: min(max(end.x, margin), 1 - margin),
+            y: min(max(end.y, margin), 1 - margin)
+        )
     }
 
     /// Trash / chrome offset above the shape centroid in board space.

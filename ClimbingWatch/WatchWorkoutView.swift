@@ -211,8 +211,6 @@ struct WatchMetricsPage: View {
 
 struct WatchLogPage: View {
     var manager: WorkoutManager
-    @State private var pendingRoute: WatchRoutePin?
-    @State private var wallIndex = 0
 
     private var grades: [String] {
         manager.logDiscipline.usesRopeGrades
@@ -220,85 +218,56 @@ struct WatchLogPage: View {
             : GradeScaleTemplate.standardVScale().grades
     }
 
-    private var walls: [WatchWall] {
-        manager.gymWalls
-    }
-
-    private var focusedWall: WatchWall? {
-        guard walls.isEmpty == false else { return nil }
-        let index = min(max(wallIndex, 0), walls.count - 1)
-        return walls[index]
+    private var boulders: [WatchBoulderRow] {
+        let rows = manager.gymWalls.flatMap { wall in
+            wall.routes.map { WatchBoulderRow(wall: wall, pin: $0) }
+        }
+        return rows.sorted { lhs, rhs in
+            let left = gradeRank(lhs.pin)
+            let right = gradeRank(rhs.pin)
+            if left != right { return left < right }
+            if lhs.pin.color != rhs.pin.color { return lhs.pin.color < rhs.pin.color }
+            return lhs.wall.name < rhs.wall.name
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if walls.count > 1, let wall = focusedWall {
-                NavigationLink {
-                    WatchWallPicker(walls: walls, index: $wallIndex)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(wall.name)
-                            .font(.caption2.bold())
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-            }
-
-            if let wall = focusedWall {
-                ZStack {
-                    WatchGymMap(wall: wall) { pin in
-                        pendingRoute = pin
-                    }
-                    if let pin = pendingRoute {
-                        VStack(spacing: 6) {
-                            Spacer(minLength: 0)
-                            Text(pin.label)
-                                .font(.caption.bold())
-                                .lineLimit(1)
-                            Button("Flashed") {
-                                manager.logRoute(pin, outcome: .flash)
-                                pendingRoute = nil
-                            }
-                            .tint(.yellow)
-                            Button("Topped") {
-                                manager.logRoute(pin, outcome: .send)
-                                pendingRoute = nil
-                            }
-                            .tint(.green)
-                            Button("Cancel") { pendingRoute = nil }
-                                .tint(.gray)
-                            Spacer(minLength: 0)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+        Group {
+            if boulders.isEmpty {
                 fallbackLogger
-            }
-
-            if let latest = manager.loggedSends.first {
-                Text(watchSendCaption(latest))
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            } else {
+                List(boulders) { row in
+                    NavigationLink {
+                        WatchBoulderDetail(wall: row.wall, pin: row.pin, manager: manager)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(Color(hold: row.pin.holdColor))
+                                .frame(width: 16, height: 16)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(row.pin.grade)
+                                    .font(.headline)
+                                Text(row.wall.name)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.carousel)
             }
         }
         .navigationTitle(manager.gymName ?? "Send")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { WatchStore.shared.requestGymMap() }
-        .onChange(of: walls.map(\.id)) { _, _ in
-            wallIndex = min(wallIndex, max(walls.count - 1, 0))
-        }
+    }
+
+    private func gradeRank(_ pin: WatchRoutePin) -> Int {
+        let scale = pin.disciplineValue.usesRopeGrades
+            ? GradeScaleTemplate.standardYDS()
+            : GradeScaleTemplate.standardVScale()
+        return scale.index(of: pin.grade) ?? 1_000
     }
 
     private var fallbackLogger: some View {
@@ -351,12 +320,6 @@ struct WatchLogPage: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
         }
-    }
-
-    private func watchSendCaption(_ send: SessionSend) -> String {
-        [send.wall, send.routeLabel ?? send.grade, send.outcome == .flash ? "Flashed" : "Topped"]
-            .compactMap { $0 }
-            .joined(separator: " · ")
     }
 }
 

@@ -125,7 +125,7 @@ struct GymMapView: View {
 
     private var hint: String {
         if editingShape, selectedWall != nil {
-            return "Drag corners or + to reshape. Trash removes a segment. Ends snap to link or close."
+            return "Drag corners to reshape. Drag + to extend. Drag one end onto the other to close."
         }
         if let tool = drawTool {
             switch tool {
@@ -386,6 +386,8 @@ struct GymMapView: View {
                     if wall.shapeClosed == false {
                         if wall.floorPlanPoints().count >= 3 {
                             Button("Close shape") { closeShape(wall) }
+                                .font(.caption.bold())
+                            Button("Remove end") { removeLastPoint(on: wall) }
                                 .font(.caption.bold())
                         }
                         Button("Break") { breakSelectedWall() }
@@ -769,7 +771,6 @@ struct GymMapView: View {
         let points = wall.floorPlanPoints()
         let isOpenLine = wall.shapeClosed == false
         let vertexSize: CGFloat = isOpenLine && points.count <= 3 ? 28 : 22
-        let segmentCount = FloorPlanMath.segmentCount(points: points, closed: wall.shapeClosed)
 
         ForEach(Array(points.enumerated()), id: \.offset) { index, pt in
             Circle()
@@ -779,23 +780,6 @@ struct GymMapView: View {
                 .contentShape(Circle().scale(1.4))
                 .position(pixel(pt, in: size))
                 .highPriorityGesture(vertexDrag(wall: wall, index: index, in: size))
-        }
-
-        ForEach(0 ..< segmentCount, id: \.self) { index in
-            if let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: index) {
-                Button {
-                    deleteSegment(at: index, on: wall)
-                } label: {
-                    Image(systemName: "trash.fill")
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(Color.red.opacity(0.92), in: Circle())
-                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
-                }
-                .buttonStyle(.plain)
-                .position(pixel(mid, in: size))
-            }
         }
 
         if isOpenLine, points.isEmpty == false {
@@ -849,11 +833,42 @@ struct GymMapView: View {
                 let origin = vertexSnapOrigin(points: pts, index: index)
                 pts[index] = applySnaps(to: raw, origin: origin, excluding: wall)
                 wall.setFloorPlanPoints(pts)
+                keepVisible(pts[index], in: board)
             }
             .onEnded { _ in
                 tryLinkOrClose(wall)
                 persistMap()
             }
+    }
+
+    /// Slide the map so a dragged corner or + handle stays on screen.
+    private func keepVisible(_ point: PlanPoint, in size: CGSize) {
+        let local = CGPoint(x: point.x * size.width, y: point.y * size.height)
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let zoom = effectiveZoom
+        let screen = CGPoint(
+            x: center.x + (local.x - center.x) * zoom + panOffset.width,
+            y: center.y + (local.y - center.y) * zoom + panOffset.height
+        )
+        let margin: CGFloat = 64
+        var shift = CGSize.zero
+        if screen.x < margin { shift.width = margin - screen.x }
+        if screen.x > size.width - margin { shift.width = size.width - margin - screen.x }
+        if screen.y < margin { shift.height = margin - screen.y }
+        if screen.y > size.height - margin { shift.height = size.height - margin - screen.y }
+        guard shift != .zero else { return }
+        panOffset.width += shift.width
+        panOffset.height += shift.height
+        panAnchor = panOffset
+    }
+
+    private func removeLastPoint(on wall: GymArea) {
+        var points = wall.floorPlanPoints()
+        guard points.count > 2 else { return }
+        points.removeLast()
+        wall.setFloorPlanPoints(points)
+        wall.shapeClosed = false
+        persistMap()
     }
 
     private func vertexSnapOrigin(points: [PlanPoint], index: Int) -> PlanPoint? {
@@ -1099,6 +1114,7 @@ struct GymMapView: View {
                     }
                     wall.setFloorPlanPoints(pts)
                 }
+                keepVisible(point, in: board)
             }
             .onEnded { _ in
                 extendingWallID = nil

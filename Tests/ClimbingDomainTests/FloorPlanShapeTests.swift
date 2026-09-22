@@ -130,9 +130,8 @@ final class FloorPlanShapeTests: XCTestCase {
             PlanPoint(x: 0.3, y: 0.5),
         ]
         let handle = FloorPlanMath.addSegmentHandle(after: points)
-        // Last segment length is 0.2, so + sits another 0.2 beyond the end.
         XCTAssertEqual(handle.x, 0.3, accuracy: 1e-6)
-        XCTAssertEqual(handle.y, 0.7, accuracy: 1e-6)
+        XCTAssertEqual(handle.y, 0.5 + FloorPlanMath.extendHandleStep, accuracy: 1e-6)
     }
 
     func testAddSegmentHandleBeforeStart() {
@@ -142,17 +141,17 @@ final class FloorPlanShapeTests: XCTestCase {
         ]
         let handle = FloorPlanMath.addSegmentHandle(before: points)
         XCTAssertEqual(handle.x, 0.3, accuracy: 1e-6)
-        XCTAssertEqual(handle.y, 0.1, accuracy: 1e-6)
+        XCTAssertEqual(handle.y, 0.3 - FloorPlanMath.extendHandleStep, accuracy: 1e-6)
     }
 
-    func testAddSegmentHandlePastBoardEdgeStaysOffCanvas() {
+    func testAddSegmentHandleNearEdgeStaysOnCanvas() {
         let points = [
             PlanPoint(x: 0.7, y: 0.5),
             PlanPoint(x: 0.95, y: 0.5),
         ]
         let handle = FloorPlanMath.addSegmentHandle(after: points)
-        // Segment length 0.25 → tip at 0.95 + 0.25 = 1.2 (must not clamp to 1.0).
-        XCTAssertEqual(handle.x, 1.2, accuracy: 1e-6)
+        XCTAssertLessThanOrEqual(handle.x, 1 - FloorPlanMath.extendHandleMargin + 1e-6)
+        XCTAssertGreaterThanOrEqual(handle.x, FloorPlanMath.extendHandleMargin - 1e-6)
         XCTAssertEqual(handle.y, 0.5, accuracy: 1e-6)
     }
 
