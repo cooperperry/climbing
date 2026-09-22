@@ -54,10 +54,10 @@ final class WatchGymContextTests: XCTestCase {
         XCTAssertTrue(decoded.wall(named: "Cave")?.routes.isEmpty ?? false)
     }
 
-    func testPinCoordinatesClampToThePhoto() {
+    func testPinCoordinatesStayOnTheFloorPlan() {
         let pin = WatchRoutePin(grade: "V2", color: HoldColor.red.rawValue, x: 1.4, y: -0.2)
-        XCTAssertEqual(pin.x, 1)
-        XCTAssertEqual(pin.y, 0)
+        XCTAssertEqual(pin.x, 1.4, accuracy: 1e-9)
+        XCTAssertEqual(pin.y, -0.2, accuracy: 1e-9)
     }
 
     func testPhoneMapTapReplacesWatchPick() {

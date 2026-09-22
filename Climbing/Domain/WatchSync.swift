@@ -51,9 +51,8 @@ public struct WatchRoutePin: Equatable, Sendable, Codable, Identifiable {
         self.id = id
         self.grade = grade
         self.color = color
-        let clamped = GymJoinMath.clampPin(x: x, y: y)
-        self.x = clamped.x
-        self.y = clamped.y
+        self.x = x
+        self.y = y
         self.discipline = discipline
     }
 

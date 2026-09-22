@@ -183,30 +183,24 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
 
     // MARK: - Incoming Watch commands
 
-    private func handle(_ message: [String: Any], replyHandler: (([String: Any]) -> Void)?) {
+    @discardableResult
+    private func handle(_ message: [String: Any]) -> [String: Any] {
         let kind = message[WatchSync.kind] as? String
         if kind == WatchSync.bpm {
             if let value = message[WatchSync.value] as? Int {
                 liveBPM = value
             }
-            replyHandler?([:])
-            return
+            return [:]
         }
         if kind == WatchSync.skipRest {
             restPlan = nil
-            publishSnapshot()
-            replyHandler?([:])
-            return
+            return [:]
         }
         if kind == SummitSync.live || kind == SummitSync.workoutSummary {
             ingestLiveOrSummary(message, finished: kind == SummitSync.workoutSummary)
-            replyHandler?([:])
-            return
+            return [:]
         }
-        guard let context, let kind else {
-            replyHandler?([:])
-            return
-        }
+        guard let context, let kind else { return [:] }
         switch kind {
         case WatchSync.start:
             startSession(in: context)
@@ -219,8 +213,7 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         default:
             break
         }
-        publishSnapshot()
-        replyHandler?(snapshotReply(in: context))
+        return snapshotReply(in: context)
     }
 
     private func snapshotReply(in context: ModelContext) -> [String: Any] {
@@ -553,22 +546,43 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        Task { @MainActor in self.handle(message, replyHandler: nil) }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                _ = self.handle(message)
+                self.publishSnapshot()
+            }
+        }
     }
 
+    /// Reply on the session's delegate queue. Hopping to the main actor and
+    /// calling the reply handler from there crashes the phone when the watch launches.
     nonisolated func session(
         _ session: WCSession,
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
-        Task { @MainActor in self.handle(message, replyHandler: replyHandler) }
+        let reply: [String: Any] = DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                self.handle(message)
+            }
+        }
+        replyHandler(reply)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.publishSnapshot() }
+        }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-        Task { @MainActor in self.handle(userInfo, replyHandler: nil) }
+        Task { @MainActor in
+            _ = self.handle(userInfo)
+            self.publishSnapshot()
+        }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
-        Task { @MainActor in self.handle(applicationContext, replyHandler: nil) }
+        Task { @MainActor in
+            _ = self.handle(applicationContext)
+            self.publishSnapshot()
+        }
     }
 }

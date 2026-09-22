@@ -256,31 +256,39 @@ final class WatchStore: NSObject, WCSessionDelegate {
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
         let kind = message[WatchSync.kind] as? String
-        Task { @MainActor in
-            switch kind {
-            case WatchSync.heartRates:
-                let from = message[WatchSync.from] as? TimeInterval ?? 0
-                let to = message[WatchSync.to] as? TimeInterval ?? 0
-                let payload = (try? JSONEncoder().encode(
-                    WorkoutManager.shared.heartRateSamples(from: from, to: to)
-                )) ?? Data()
-                replyHandler([WatchSync.heartRates: payload])
-            case WatchSync.start:
-                await WorkoutManager.shared.start()
-                replyHandler([:])
-            case WatchSync.stop:
-                await WorkoutManager.shared.end()
-                replyHandler([:])
-            case WatchSync.skipRest:
-                self.skipRest(notifyPhone: false)
-                replyHandler([:])
-            default:
-                if let data = message[WatchSync.payload] as? Data {
-                    self.apply(data)
+        if kind == WatchSync.start || kind == WatchSync.stop {
+            replyHandler([:])
+            Task { @MainActor in
+                if kind == WatchSync.start {
+                    await WorkoutManager.shared.start()
+                } else {
+                    await WorkoutManager.shared.end()
                 }
-                self.ingestPhoneContext(message)
-                replyHandler([:])
+            }
+            return
+        }
+        let reply: [String: Any] = DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                switch kind {
+                case WatchSync.heartRates:
+                    let from = message[WatchSync.from] as? TimeInterval ?? 0
+                    let to = message[WatchSync.to] as? TimeInterval ?? Date().timeIntervalSince1970
+                    let payload = (try? JSONEncoder().encode(
+                        WorkoutManager.shared.heartRateSamples(from: from, to: to)
+                    )) ?? Data()
+                    return [WatchSync.heartRates: payload]
+                case WatchSync.skipRest:
+                    self.skipRest(notifyPhone: false)
+                    return [:]
+                default:
+                    if let data = message[WatchSync.payload] as? Data {
+                        self.apply(data)
+                    }
+                    self.ingestPhoneContext(message)
+                    return [:]
+                }
             }
         }
+        replyHandler(reply)
     }
 }

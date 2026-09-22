@@ -59,8 +59,8 @@ struct WatchGymMap: View {
         let spanX = max(maxX - minX, 0.08)
         let spanY = max(maxY - minY, 0.08)
         let scale = min(
-            (Double(size.width) - 16) / spanX,
-            (Double(size.height) - 48) / spanY
+            (Double(size.width) - 36) / spanX,
+            (Double(size.height) - 56) / spanY
         )
         let originX = (Double(size.width) - spanX * scale) / 2
         let originY = (Double(size.height) - 40 - spanY * scale) / 2
