@@ -52,6 +52,12 @@ public enum GymJoinMath {
         (min(1, max(0, x)), min(1, max(0, y)))
     }
 
+    /// Floor-plan space is larger than the original screen box so a gym can
+    /// extend past the first view and still be framed on a phone-shaped canvas.
+    public static func clampBoard(x: Double, y: Double) -> (x: Double, y: Double) {
+        (min(3, max(-1, x)), min(3, max(-1, y)))
+    }
+
     public static func isUsableName(_ name: String) -> Bool {
         normalizedName(name).count >= 2
     }
@@ -73,7 +79,7 @@ public struct PlanPoint: Codable, Equatable, Sendable {
     public var y: Double
 
     public init(x: Double, y: Double) {
-        let clamped = GymJoinMath.clampPin(x: x, y: y)
+        let clamped = GymJoinMath.clampBoard(x: x, y: y)
         self.x = clamped.x
         self.y = clamped.y
     }

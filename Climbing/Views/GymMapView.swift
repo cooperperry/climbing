@@ -117,8 +117,11 @@ struct GymMapView: View {
         climberName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static let minMapZoom: CGFloat = 0.12
+    private static let maxMapZoom: CGFloat = 5
+
     private var effectiveZoom: CGFloat {
-        min(4, max(0.5, zoomScale * pinchScale))
+        min(Self.maxMapZoom, max(Self.minMapZoom, zoomScale * pinchScale))
     }
 
     private var drawMode: BuildTool? { drawTool }
@@ -143,7 +146,7 @@ struct GymMapView: View {
         if selectedWall != nil {
             return "Drag a pin onto another to circle them around its tip. Hold a cluster to move it. Drag one pin away to unmerge."
         }
-        return "Pinch to zoom, drag to pan. Tap a wall to select it."
+        return "Pinch to zoom out, drag to pan. Tap a wall to select it."
     }
 
     var body: some View {
@@ -335,6 +338,7 @@ struct GymMapView: View {
                     Toggle("Vertices", isOn: $snapVertices)
                 }
                 Section {
+                    Button("Fit gym") { fitGymToScreen() }
                     Button("Reset zoom") {
                         zoomScale = 1
                         panOffset = .zero
@@ -837,7 +841,7 @@ struct GymMapView: View {
                 state = value
             }
             .onEnded { value in
-                zoomScale = min(4, max(0.5, zoomScale * value))
+                zoomScale = min(Self.maxMapZoom, max(Self.minMapZoom, zoomScale * value))
             }
     }
 
@@ -1584,15 +1588,55 @@ struct GymMapView: View {
 
     private func normalized(_ location: CGPoint, in size: CGSize) -> PlanPoint {
         let local = boardLocation(location, in: size)
-        let clamped = GymJoinMath.clampPin(
+        return PlanPoint(
             x: local.x / max(size.width, 1),
             y: local.y / max(size.height, 1)
         )
-        return PlanPoint(x: clamped.x, y: clamped.y)
     }
 
     private func pixel(_ point: PlanPoint, in size: CGSize) -> CGPoint {
         CGPoint(x: point.x * max(size.width, 1), y: point.y * max(size.height, 1))
+    }
+
+    /// Frame every wall and pin in the phone-shaped canvas.
+    private func fitGymToScreen() {
+        let size = canvasSize
+        guard size.width > 1, size.height > 1 else { return }
+        var xs: [Double] = []
+        var ys: [Double] = []
+        for wall in wallsOnFloor {
+            for point in wall.floorPlanPoints() {
+                xs.append(point.x)
+                ys.append(point.y)
+            }
+            for route in wall.routes {
+                xs.append(route.x)
+                ys.append(route.y)
+            }
+        }
+        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else {
+            zoomScale = 1
+            panOffset = .zero
+            panAnchor = .zero
+            return
+        }
+        let pad = 0.06
+        let left = minX - pad
+        let right = maxX + pad
+        let top = minY - pad
+        let bottom = maxY + pad
+        let contentW = max((right - left) * size.width, 1)
+        let contentH = max((bottom - top) * size.height, 1)
+        let scale = min(size.width / contentW, size.height / contentH)
+        let zoom = min(Self.maxMapZoom, max(Self.minMapZoom, scale))
+        zoomScale = zoom
+        let midX = (left + right) / 2 * size.width
+        let midY = (top + bottom) / 2 * size.height
+        panOffset = CGSize(
+            width: (size.width / 2 - midX) * zoom,
+            height: (size.height / 2 - midY) * zoom
+        )
+        panAnchor = panOffset
     }
 
     // MARK: - Floors

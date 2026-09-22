@@ -247,7 +247,7 @@ struct WatchLogPage: View {
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(row.pin.grade)
                                     .font(.headline)
-                                Text(row.wall.name)
+                                Text("\(row.pin.holdColor.displayName) · \(row.wall.name == "Untitled" ? "Unnamed wall" : row.wall.name)")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)

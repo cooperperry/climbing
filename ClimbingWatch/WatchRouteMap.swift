@@ -16,25 +16,21 @@ struct WatchGymMap: View {
                         Color.white.opacity(0.9),
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
                     )
-                ForEach(placedPins(in: geo.size, project: project)) { placed in
-                    let selected = highlightedID == placed.pin.id
-                    Button {
-                        onSelect(placed.pin)
-                    } label: {
+                ForEach(placedPins(project: project)) { placed in
+                    if placed.prominent {
                         Text(placed.pin.grade)
-                            .font(.system(size: selected ? 12 : 10, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(placed.pin.holdColor.prefersDarkLabel ? Color.black : Color.white)
-                            .frame(minWidth: selected ? 34 : 22, minHeight: selected ? 34 : 22)
+                            .frame(width: 36, height: 36)
                             .background(Color(hold: placed.pin.holdColor), in: Circle())
-                            .overlay {
-                                if selected {
-                                    Circle().strokeBorder(Color.white, lineWidth: 2)
-                                }
-                            }
+                            .overlay { Circle().strokeBorder(Color.white, lineWidth: 3) }
+                            .position(placed.point)
+                    } else {
+                        Circle()
+                            .fill(Color(hold: placed.pin.holdColor).opacity(0.28))
+                            .frame(width: 6, height: 6)
+                            .position(placed.point)
                     }
-                    .buttonStyle(.plain)
-                    .opacity(highlightedID == nil || selected ? 1 : 0.35)
-                    .position(placed.point)
                 }
             }
         }
@@ -56,14 +52,18 @@ struct WatchGymMap: View {
 
     /// Fit this wall's outline and its routes into the watch, then nudge stacked grades apart.
     private func projector(in size: CGSize) -> (Double, Double) -> CGPoint {
-        let anchorsX: [Double]
-        let anchorsY: [Double]
+        var anchorsX: [Double]
+        var anchorsY: [Double]
         if wall.outline.count >= 2 {
             anchorsX = wall.outline.map(\.x)
             anchorsY = wall.outline.map(\.y)
         } else {
             anchorsX = wall.routes.map(\.x)
             anchorsY = wall.routes.map(\.y)
+        }
+        if let highlightedID, let pin = wall.routes.first(where: { $0.id == highlightedID }) {
+            anchorsX.append(pin.x)
+            anchorsY.append(pin.y)
         }
         let minX = anchorsX.min() ?? 0
         let maxX = anchorsX.max() ?? 1
@@ -85,24 +85,17 @@ struct WatchGymMap: View {
         }
     }
 
-    private func placedPins(in size: CGSize, project: (Double, Double) -> CGPoint) -> [PlacedWatchPin] {
-        let groups = Dictionary(grouping: wall.routes) { pin in
-            "\(Int((pin.x * 1000).rounded())):\(Int((pin.y * 1000).rounded()))"
-        }
-        var placed: [PlacedWatchPin] = []
-        for group in groups.values {
-            let sorted = group.sorted { $0.id < $1.id }
-            let angles = FloorPlanMath.clusterAngles(count: sorted.count)
-            for (index, pin) in sorted.enumerated() {
-                let center = project(pin.x, pin.y)
-                let angle = angles.indices.contains(index) ? angles[index] : 0
-                let radius: CGFloat = sorted.count > 1 ? 16 : 0
-                let point = CGPoint(
-                    x: min(max(center.x + radius * sin(angle), 16), size.width - 16),
-                    y: min(max(center.y - radius * cos(angle), 16), size.height - 16)
-                )
-                placed.append(PlacedWatchPin(pin: pin, point: point))
+    private func placedPins(project: (Double, Double) -> CGPoint) -> [PlacedWatchPin] {
+        guard let highlightedID, let selected = wall.routes.first(where: { $0.id == highlightedID }) else {
+            return wall.routes.map { pin in
+                PlacedWatchPin(pin: pin, point: project(pin.x, pin.y), prominent: true)
             }
+        }
+        var placed = [
+            PlacedWatchPin(pin: selected, point: project(selected.x, selected.y), prominent: true)
+        ]
+        for pin in wall.routes where pin.id != selected.id {
+            placed.append(PlacedWatchPin(pin: pin, point: project(pin.x, pin.y), prominent: false))
         }
         return placed
     }
@@ -111,6 +104,7 @@ struct WatchGymMap: View {
 private struct PlacedWatchPin: Identifiable {
     var pin: WatchRoutePin
     var point: CGPoint
+    var prominent: Bool
     var id: String { pin.id }
 }
 
@@ -128,13 +122,17 @@ struct WatchBoulderDetail: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Text(wall.name)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text(wallLabel)
+                .font(.caption2.bold())
+                .foregroundStyle(wall.name == "Untitled" ? Color.orange : Color.secondary)
                 .lineLimit(1)
             WatchGymMap(wall: wall, highlightedID: pin.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
+            Text("Confirm this is \(pin.label).")
+                .font(.system(size: 11, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
             HStack(spacing: 6) {
                 Button("Flashed") {
                     manager.selectLogWall(wall.name)
@@ -154,5 +152,9 @@ struct WatchBoulderDetail: View {
         }
         .navigationTitle(pin.label)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var wallLabel: String {
+        wall.name == "Untitled" ? "Unnamed wall" : wall.name
     }
 }

@@ -46,7 +46,7 @@ final class GymArea {
     ) {
         self.id = id
         self.name = name
-        let clamped = GymJoinMath.clampPin(x: x, y: y)
+        let clamped = GymJoinMath.clampBoard(x: x, y: y)
         self.x = clamped.x
         self.y = clamped.y
         self.gym = gym

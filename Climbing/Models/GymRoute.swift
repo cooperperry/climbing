@@ -39,7 +39,7 @@ final class GymRoute {
         self.id = id
         self.grade = grade
         self.colorName = colorName
-        let clamped = GymJoinMath.clampPin(x: x, y: y)
+        let clamped = GymJoinMath.clampBoard(x: x, y: y)
         self.x = clamped.x
         self.y = clamped.y
         self.disciplineRaw = discipline.rawValue
@@ -51,7 +51,7 @@ final class GymRoute {
     }
 
     func setPin(x: Double, y: Double) {
-        let clamped = GymJoinMath.clampPin(x: x, y: y)
+        let clamped = GymJoinMath.clampBoard(x: x, y: y)
         self.x = clamped.x
         self.y = clamped.y
     }
