@@ -219,32 +219,28 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertLessThan(pulled.x, toward.x)
     }
 
-    func testMergeClusterCountAndGrowth() {
-        let center = PlanPoint(x: 0.5, y: 0.5)
-        let two = FloorPlanMath.mergeCluster(count: 2, around: center)
-        let five = FloorPlanMath.mergeCluster(count: 5, around: center)
-        let eight = FloorPlanMath.mergeCluster(count: 8, around: center)
-        XCTAssertEqual(two.count, 2)
-        XCTAssertEqual(five.count, 5)
-        XCTAssertEqual(eight.count, 8)
-        // Radius grows with count.
-        let r2 = FloorPlanMath.distance(two[0], center)
-        let r5 = FloorPlanMath.distance(five[0], center)
-        let r8 = FloorPlanMath.distance(eight[0], center)
-        XCTAssertGreaterThan(r5, r2)
-        XCTAssertGreaterThan(r8, r5)
-        // All pins equidistant from center.
-        for slot in five {
-            XCTAssertEqual(FloorPlanMath.distance(slot, center), r5, accuracy: 1e-6)
+    func testMergeClusterSharesOneTip() {
+        let center = PlanPoint(x: 0.4, y: 0.6)
+        for count in [1, 2, 5, 8] {
+            let slots = FloorPlanMath.mergeCluster(count: count, around: center)
+            XCTAssertEqual(slots.count, count)
+            for slot in slots {
+                XCTAssertEqual(slot.x, center.x, accuracy: 1e-9)
+                XCTAssertEqual(slot.y, center.y, accuracy: 1e-9)
+            }
         }
     }
 
-    func testMergeClusterSingleReturnsCentre() {
-        let center = PlanPoint(x: 0.3, y: 0.7)
-        let one = FloorPlanMath.mergeCluster(count: 1, around: center)
-        XCTAssertEqual(one.count, 1)
-        XCTAssertEqual(one[0].x, center.x, accuracy: 1e-9)
-        XCTAssertEqual(one[0].y, center.y, accuracy: 1e-9)
+    func testClusterAnglesRevolveEvenlyAroundTip() {
+        XCTAssertEqual(FloorPlanMath.clusterAngles(count: 1), [0])
+        let two = FloorPlanMath.clusterAngles(count: 2)
+        XCTAssertEqual(two[0], 0, accuracy: 1e-9)
+        XCTAssertEqual(two[1], .pi, accuracy: 1e-9)
+        let five = FloorPlanMath.clusterAngles(count: 5)
+        XCTAssertEqual(five.count, 5)
+        XCTAssertEqual(five[0], 0, accuracy: 1e-9)
+        XCTAssertEqual(five[1], 2 * .pi / 5, accuracy: 1e-9)
+        XCTAssertEqual(five[4], 8 * .pi / 5, accuracy: 1e-9)
     }
 
     func testCircleSlotsFillRing() {

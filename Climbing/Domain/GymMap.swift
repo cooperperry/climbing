@@ -551,6 +551,9 @@ public enum FloorPlanMath {
     /// How close two route pins must be to snap-merge on drag.
     public static let routeMergeDistance: Double = 0.07
 
+    /// How far a grouped pin must be dragged before it leaves its cluster.
+    public static let routeUnmergeDistance: Double = 0.04
+
     /// Soft magnetic pull while dragging one pin toward another.
     public static func magneticPull(
         from point: PlanPoint,
@@ -567,23 +570,21 @@ public enum FloorPlanMath {
         )
     }
 
-    /// Tight circle of route pins around a center point.
-    /// Radius grows gently with count so pins stay readable but close together.
+    /// Every merged pin shares this tip. Heads are fanned around it by `clusterAngles`.
     public static func mergeCluster(
         count: Int,
         around center: PlanPoint
     ) -> [PlanPoint] {
         guard count > 0 else { return [] }
-        if count == 1 { return [center] }
-        // Tight radius: 0.04 for 2 pins, growing ~0.012 per extra pin.
-        let radius = 0.04 + Double(count - 2) * 0.012
-        // Start at top (−π/2) and go clockwise.
-        return (0 ..< count).map { i in
-            let angle = -.pi / 2 + (2 * .pi) * Double(i) / Double(count)
-            return PlanPoint(
-                x: center.x + cos(angle) * radius,
-                y: center.y + sin(angle) * radius
-            )
+        return Array(repeating: center, count: count)
+    }
+
+    /// Clockwise radians from straight up, one per pin, evenly spaced around the shared tip.
+    /// A single pin stays upright (0). Two pins sit opposite each other.
+    public static func clusterAngles(count: Int) -> [Double] {
+        guard count > 1 else { return count == 1 ? [0] : [] }
+        return (0 ..< count).map { index in
+            (2 * .pi) * Double(index) / Double(count)
         }
     }
 

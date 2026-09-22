@@ -67,6 +67,7 @@ struct GymMapView: View {
     @State private var draftColor: HoldColor = .blue
     @State private var extendingWallID: UUID?
     @State private var draggingRouteID: UUID?
+    @State private var routeDragSession = RouteDragSession()
     @State private var mergeTargetRouteID: UUID?
     @State private var mergingRouteIDs: Set<UUID> = []
     @State private var dragEditsShape = false
@@ -139,7 +140,7 @@ struct GymMapView: View {
             }
         }
         if selectedWall != nil {
-            return "Tap Routes to set climbs. Drag a pin onto another to grow a semi-circle cluster."
+            return "Drag a pin onto another to circle them around its tip. Drag a pin away to unmerge it."
         }
         return "Pinch to zoom, drag to pan. Tap a wall to select it."
     }
@@ -602,6 +603,7 @@ struct GymMapView: View {
                 }
             }
             .frame(width: size.width, height: size.height)
+            .coordinateSpace(name: "gymMap")
             .scaleEffect(effectiveZoom)
             .offset(panOffset)
             .contentShape(Rectangle())
@@ -723,14 +725,21 @@ struct GymMapView: View {
             let merging = mergingRouteIDs.contains(route.id)
             let isTarget = mergeTargetRouteID == route.id
             let isDragging = draggingRouteID == route.id
+            let tipAngle = pinTipAngle(for: route)
+            let head = RouteMapPin.headOffset(for: tipAngle)
             RouteMapPin(
                 grade: route.grade,
                 holdColor: route.holdColor,
-                highlighted: isDragging || isTarget || merging
+                highlighted: isDragging || isTarget || merging,
+                tipAngle: tipAngle
             )
-            .frame(width: 30, height: 38)
-            // Tip of the pin sits on the board coordinate (Google Maps style).
-            .offset(y: -19)
+            .frame(width: 96, height: 96)
+            .contentShape(
+                CircleSpot(
+                    center: CGPoint(x: 48 + head.width, y: 48 + head.height),
+                    radius: 20
+                )
+            )
             .scaleEffect(
                 isTarget ? 1.12
                     : merging ? 0.9
@@ -743,6 +752,7 @@ struct GymMapView: View {
             .animation(Self.routeSpring, value: route.y)
             .animation(Self.routeSpring, value: merging)
             .animation(Self.routeSpring, value: isTarget)
+            .animation(Self.routeSpring, value: tipAngle)
             .highPriorityGesture(routeDrag(route, in: size))
         }
     }
@@ -851,12 +861,22 @@ struct GymMapView: View {
     }
 
     private func routeDrag(_ route: GymRoute, in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("gymMap"))
             .onChanged { value in
                 draggingRouteID = route.id
                 let board = canvasSize == .zero ? size : canvasSize
-                var point = normalized(value.location, in: board)
-                if let other = nearestRoutePin(to: point, excluding: route.id) {
+                let origin = routeDragSession.begin(route)
+                var point = PlanPoint(
+                    x: origin.x + value.translation.width / max(board.width, 1),
+                    y: origin.y + value.translation.height / max(board.height, 1)
+                )
+                if let other = nearestRoutePin(
+                    to: point,
+                    excluding: route.id,
+                    ignoringGroup: route.groupKey,
+                    draggedAngle: pinTipAngle(for: route),
+                    in: board
+                ) {
                     mergeTargetRouteID = other.id
                     point = FloorPlanMath.magneticPull(
                         from: point,
@@ -871,11 +891,34 @@ struct GymMapView: View {
                 if let targetID = mergeTargetRouteID,
                    let target = routeOnFloor(id: targetID) {
                     snapMergeRoutes(dragged: route, onto: target)
+                } else if let origin = routeDragSession.origin, route.groupKey != nil {
+                    let moved = FloorPlanMath.distance(
+                        PlanPoint(x: route.x, y: route.y),
+                        origin
+                    )
+                    if moved >= FloorPlanMath.routeUnmergeDistance {
+                        unmergeRoute(route)
+                    } else {
+                        route.setPin(x: origin.x, y: origin.y)
+                    }
                 }
                 draggingRouteID = nil
                 mergeTargetRouteID = nil
+                routeDragSession.end()
                 persistMap()
             }
+    }
+
+    /// Clockwise angle that puts this pin's head on the circle around the shared tip.
+    private func pinTipAngle(for route: GymRoute) -> Angle {
+        guard let key = route.groupKey else { return .zero }
+        let mates = allFloorRoutes()
+            .filter { $0.groupKey == key }
+            .sorted { $0.createdAt < $1.createdAt }
+        guard mates.count > 1,
+              let index = mates.firstIndex(where: { $0.id == route.id })
+        else { return .zero }
+        return .radians(FloorPlanMath.clusterAngles(count: mates.count)[index])
     }
 
     private func allFloorRoutes() -> [GymRoute] {
@@ -886,10 +929,23 @@ struct GymMapView: View {
         allFloorRoutes().first { $0.id == id }
     }
 
-    private func nearestRoutePin(to point: PlanPoint, excluding id: UUID) -> GymRoute? {
+    private func nearestRoutePin(
+        to point: PlanPoint,
+        excluding id: UUID,
+        ignoringGroup group: String? = nil,
+        draggedAngle: Angle = .zero,
+        in size: CGSize
+    ) -> GymRoute? {
+        let draggedHead = headBoardPoint(tip: point, angle: draggedAngle, in: size)
         var best: (GymRoute, Double)?
         for route in allFloorRoutes() where route.id != id {
-            let d = FloorPlanMath.distance(point, PlanPoint(x: route.x, y: route.y))
+            if let group, route.groupKey == group { continue }
+            let tip = PlanPoint(x: route.x, y: route.y)
+            let head = headBoardPoint(tip: tip, angle: pinTipAngle(for: route), in: size)
+            let d = min(
+                FloorPlanMath.distance(point, tip),
+                FloorPlanMath.distance(draggedHead, head)
+            )
             if d < FloorPlanMath.routeMergeDistance, best == nil || d < best!.1 {
                 best = (route, d)
             }
@@ -897,37 +953,64 @@ struct GymMapView: View {
         return best?.0
     }
 
-    /// Drag one pin onto another → collect both clusters into one tight circle.
+    /// Board position of a pin head. Angle 0 is straight above the tip.
+    private func headBoardPoint(tip: PlanPoint, angle: Angle, in size: CGSize) -> PlanPoint {
+        let head = RouteMapPin.headOffset(for: angle)
+        return PlanPoint(
+            x: tip.x + Double(head.width) / max(size.width, 1),
+            y: tip.y + Double(head.height) / max(size.height, 1)
+        )
+    }
+
+    /// Drop one pin on another. Only the dragged pin joins the target — former
+    /// partners stay behind so two pins can be paired on their own.
     private func snapMergeRoutes(dragged: GymRoute, onto target: GymRoute) {
         guard dragged.id != target.id else { return }
+        if let draggedKey = dragged.groupKey, draggedKey == target.groupKey {
+            let tip = PlanPoint(x: target.x, y: target.y)
+            animateRouteLayout([dragged], to: [tip])
+            return
+        }
+
+        let previousKey = dragged.groupKey
         let host = target.wall ?? dragged.wall
-        let key = target.groupKey ?? dragged.groupKey ?? UUID().uuidString
+        let key = target.groupKey ?? UUID().uuidString
 
-        // Collect existing cluster members from both sides.
-        var cluster: [GymRoute] = [dragged, target]
-        if let g = target.groupKey {
-            cluster += allFloorRoutes().filter { $0.groupKey == g && $0.id != target.id }
-        }
-        if let g = dragged.groupKey, g != key {
-            cluster += allFloorRoutes().filter { $0.groupKey == g && $0.id != dragged.id }
-        }
-        var seen = Set<UUID>()
-        cluster = cluster.filter { seen.insert($0.id).inserted }
+        dragged.groupKey = nil
+        dissolveGroupIfSparse(previousKey)
 
-        for route in cluster {
-            route.wall = host
-            route.groupKey = key
-        }
+        dragged.wall = host
+        dragged.groupKey = key
+        target.groupKey = key
 
-        let sorted = cluster.sorted { $0.createdAt < $1.createdAt }
         let center = PlanPoint(x: target.x, y: target.y)
-        let slots = FloorPlanMath.mergeCluster(count: sorted.count, around: center)
+        let cluster = allFloorRoutes()
+            .filter { $0.groupKey == key }
+            .sorted { $0.createdAt < $1.createdAt }
+        let slots = FloorPlanMath.mergeCluster(count: cluster.count, around: center)
 
         if let host {
             selectedWall = host
             if routesWall != nil { routesWall = host }
         }
-        animateRouteLayout(sorted, to: slots)
+        animateRouteLayout(cluster, to: slots)
+    }
+
+    /// Drag a pin off its cluster. A leftover single pin becomes independent too.
+    private func unmergeRoute(_ route: GymRoute) {
+        guard let key = route.groupKey else { return }
+        route.groupKey = nil
+        dissolveGroupIfSparse(key)
+    }
+
+    private func dissolveGroupIfSparse(_ key: String?) {
+        guard let key else { return }
+        let rest = allFloorRoutes().filter { $0.groupKey == key }
+        if rest.count <= 1 {
+            for route in rest {
+                route.groupKey = nil
+            }
+        }
     }
 
     private func addSegmentDrag(wall: GymArea, in size: CGSize, fromStart: Bool) -> some Gesture {
@@ -1699,14 +1782,62 @@ struct GymMapView: View {
     }
 }
 
-/// Google Maps–style teardrop pin with the V-grade in the head.
+private struct CircleSpot: Shape {
+    var center: CGPoint
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        Path(ellipseIn: CGRect(
+            x: center.x - radius,
+            y: center.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        ))
+    }
+}
+
+/// Remembers where a pin drag started. A class so updates are visible inside the gesture
+/// before SwiftUI flushes `@State`.
+private final class RouteDragSession {
+    var routeID: UUID?
+    var origin: PlanPoint?
+
+    func begin(_ route: GymRoute) -> PlanPoint {
+        if routeID != route.id || origin == nil {
+            routeID = route.id
+            origin = PlanPoint(x: route.x, y: route.y)
+        }
+        return origin ?? PlanPoint(x: route.x, y: route.y)
+    }
+
+    func end() {
+        routeID = nil
+        origin = nil
+    }
+}
+
+/// Google Maps–style teardrop. The view's center is the tip, so a cluster can
+/// rotate each pin around that shared point while the grade stays upright.
 private struct RouteMapPin: View {
     var grade: String
     var holdColor: HoldColor
     var highlighted: Bool = false
+    var tipAngle: Angle = .zero
+
+    static let pinWidth: CGFloat = 30
+    static let pinHeight: CGFloat = 38
+
+    /// Head center relative to the tip. Angle 0 keeps the head straight above the tip.
+    static func headOffset(for angle: Angle) -> CGSize {
+        let headRadius = min(pinWidth, pinHeight * 0.62) / 2
+        let orbit = pinHeight - headRadius
+        let radians = CGFloat(angle.radians)
+        return CGSize(width: orbit * sin(radians), height: -orbit * cos(radians))
+    }
 
     var body: some View {
-        ZStack(alignment: .top) {
+        let head = Self.headOffset(for: tipAngle)
+        ZStack {
             MapPinShape()
                 .fill(Color(hold: holdColor))
                 .overlay {
@@ -1717,14 +1848,20 @@ private struct RouteMapPin: View {
                         )
                 }
                 .shadow(color: .black.opacity(0.35), radius: highlighted ? 4 : 2, y: 1)
+                .frame(width: Self.pinWidth, height: Self.pinHeight)
+                .offset(y: -Self.pinHeight / 2)
+                .rotationEffect(tipAngle)
+                .allowsHitTesting(false)
 
             Text(grade)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(holdColor.prefersDarkLabel ? Color.black : Color.white)
-                .padding(.top, 7)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
+                .offset(x: head.width, y: head.height)
+                .allowsHitTesting(false)
         }
+        .frame(width: Self.pinWidth, height: Self.pinHeight)
         .accessibilityLabel(grade)
     }
 }
