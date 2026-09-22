@@ -273,12 +273,12 @@ public enum FloorPlanMath {
     }
 
     /// Tip beyond the last vertex — used as a drag handle to add a segment.
-    public static func addSegmentHandle(after points: [PlanPoint], step: Double = 0.09) -> PlanPoint {
+    public static func addSegmentHandle(after points: [PlanPoint], step: Double = 0.13) -> PlanPoint {
         extendedPoint(after: points, step: step)
     }
 
     /// Tip beyond the first vertex — extend an open line from the other end.
-    public static func addSegmentHandle(before points: [PlanPoint], step: Double = 0.09) -> PlanPoint {
+    public static func addSegmentHandle(before points: [PlanPoint], step: Double = 0.13) -> PlanPoint {
         guard points.count >= 2 else {
             let anchor = points.first ?? PlanPoint(x: 0.5, y: 0.5)
             return PlanPoint(x: anchor.x - step, y: anchor.y)

@@ -449,20 +449,12 @@ struct GymMapView: View {
             Button {
                 deleteSelectedSegment(on: wall)
             } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "trash.fill")
-                        .font(.body.bold())
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(Color.red.opacity(0.92), in: Circle())
-                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
-                    Text("Segment")
-                        .font(.caption2.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.red.opacity(0.85), in: Capsule())
-                }
+                Image(systemName: "trash.fill")
+                    .font(.body.bold())
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Color.red.opacity(0.92), in: Circle())
+                    .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
             }
             .buttonStyle(.plain)
             .position(pixel(mid, in: size))
@@ -788,8 +780,8 @@ struct GymMapView: View {
         let pts = wall.floorPlanPoints()
         let after = FloorPlanMath.addSegmentHandle(after: pts)
         let before = FloorPlanMath.addSegmentHandle(before: pts)
-        return FloorPlanMath.distance(after, point) < 0.07
-            || FloorPlanMath.distance(before, point) < 0.07
+        return FloorPlanMath.distance(after, point) < 0.085
+            || FloorPlanMath.distance(before, point) < 0.085
     }
 
     private func nearTrash(of wall: GymArea, point: PlanPoint) -> Bool {
