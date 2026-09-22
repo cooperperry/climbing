@@ -272,26 +272,37 @@ public enum FloorPlanMath {
         hypot(a.x - b.x, a.y - b.y)
     }
 
-    /// Tip beyond the last vertex — used as a drag handle to add a segment.
-    public static func addSegmentHandle(after points: [PlanPoint], step: Double = 0.13) -> PlanPoint {
-        extendedPoint(after: points, step: step)
+    /// Tip beyond the last vertex — offset matches the length of the last segment.
+    public static func addSegmentHandle(after points: [PlanPoint], step: Double? = nil) -> PlanPoint {
+        let fallback = 0.12
+        guard points.count >= 2 else {
+            return extendedPoint(after: points, step: step ?? fallback)
+        }
+        let last = points[points.count - 1]
+        let prev = points[points.count - 2]
+        let length = max(distance(prev, last), 0.04)
+        return extendedPoint(after: points, step: step ?? length)
     }
 
-    /// Tip beyond the first vertex — extend an open line from the other end.
-    public static func addSegmentHandle(before points: [PlanPoint], step: Double = 0.13) -> PlanPoint {
+    /// Tip beyond the first vertex — offset matches the length of the first segment.
+    public static func addSegmentHandle(before points: [PlanPoint], step: Double? = nil) -> PlanPoint {
+        let fallback = 0.12
         guard points.count >= 2 else {
             let anchor = points.first ?? PlanPoint(x: 0.5, y: 0.5)
-            return PlanPoint(x: anchor.x - step, y: anchor.y)
+            let use = step ?? fallback
+            return PlanPoint(x: anchor.x - use, y: anchor.y)
         }
         let first = points[0]
         let next = points[1]
+        let length = max(distance(first, next), 0.04)
+        let use = step ?? length
         let dx = first.x - next.x
         let dy = first.y - next.y
         let len = hypot(dx, dy)
         guard len > 1e-6 else {
-            return PlanPoint(x: first.x - step, y: first.y)
+            return PlanPoint(x: first.x - use, y: first.y)
         }
-        return PlanPoint(x: first.x + dx / len * step, y: first.y + dy / len * step)
+        return PlanPoint(x: first.x + dx / len * use, y: first.y + dy / len * use)
     }
 
     /// Trash / chrome offset above the shape centroid in board space.

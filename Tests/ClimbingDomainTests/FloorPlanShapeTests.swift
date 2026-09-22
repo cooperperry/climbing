@@ -129,9 +129,10 @@ final class FloorPlanShapeTests: XCTestCase {
             PlanPoint(x: 0.3, y: 0.3),
             PlanPoint(x: 0.3, y: 0.5),
         ]
-        let handle = FloorPlanMath.addSegmentHandle(after: points, step: 0.1)
+        let handle = FloorPlanMath.addSegmentHandle(after: points)
+        // Last segment length is 0.2, so + sits another 0.2 beyond the end.
         XCTAssertEqual(handle.x, 0.3, accuracy: 1e-6)
-        XCTAssertEqual(handle.y, 0.6, accuracy: 1e-6)
+        XCTAssertEqual(handle.y, 0.7, accuracy: 1e-6)
     }
 
     func testAddSegmentHandleBeforeStart() {
@@ -139,9 +140,9 @@ final class FloorPlanShapeTests: XCTestCase {
             PlanPoint(x: 0.3, y: 0.3),
             PlanPoint(x: 0.3, y: 0.5),
         ]
-        let handle = FloorPlanMath.addSegmentHandle(before: points, step: 0.1)
+        let handle = FloorPlanMath.addSegmentHandle(before: points)
         XCTAssertEqual(handle.x, 0.3, accuracy: 1e-6)
-        XCTAssertEqual(handle.y, 0.2, accuracy: 1e-6)
+        XCTAssertEqual(handle.y, 0.1, accuracy: 1e-6)
     }
 
     func testChromeAnchorSitsAboveCentroid() {
