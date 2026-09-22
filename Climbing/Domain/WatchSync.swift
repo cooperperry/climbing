@@ -87,23 +87,26 @@ public struct WatchWall: Equatable, Sendable, Codable, Identifiable {
     public var routes: [WatchRoutePin]
     public var outline: [WatchOutlinePoint]
     public var closed: Bool
+    public var floor: String
 
-    public var id: String { name }
+    public var id: String { "\(floor)|\(name)" }
 
     public init(
         name: String,
         routes: [WatchRoutePin] = [],
         outline: [WatchOutlinePoint] = [],
-        closed: Bool = false
+        closed: Bool = false,
+        floor: String = "Main"
     ) {
         self.name = name
         self.routes = routes
         self.outline = outline
         self.closed = closed
+        self.floor = floor
     }
 
     enum CodingKeys: String, CodingKey {
-        case name, routes, outline, closed
+        case name, routes, outline, closed, floor
     }
 
     public init(from decoder: Decoder) throws {
@@ -112,6 +115,7 @@ public struct WatchWall: Equatable, Sendable, Codable, Identifiable {
         routes = try container.decodeIfPresent([WatchRoutePin].self, forKey: .routes) ?? []
         outline = try container.decodeIfPresent([WatchOutlinePoint].self, forKey: .outline) ?? []
         closed = try container.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+        floor = try container.decodeIfPresent(String.self, forKey: .floor) ?? "Main"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -120,6 +124,7 @@ public struct WatchWall: Equatable, Sendable, Codable, Identifiable {
         try container.encode(routes, forKey: .routes)
         try container.encode(outline, forKey: .outline)
         try container.encode(closed, forKey: .closed)
+        try container.encode(floor, forKey: .floor)
     }
 }
 

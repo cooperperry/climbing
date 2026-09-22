@@ -211,6 +211,7 @@ struct WatchMetricsPage: View {
 
 struct WatchLogPage: View {
     var manager: WorkoutManager
+    @State private var floorName = ""
 
     private var grades: [String] {
         manager.logDiscipline.usesRopeGrades
@@ -218,10 +219,20 @@ struct WatchLogPage: View {
             : GradeScaleTemplate.standardVScale().grades
     }
 
+    private var floors: [String] {
+        Array(Set(manager.gymWalls.map(\.floor))).sorted()
+    }
+
+    private var selectedFloor: String {
+        floors.contains(floorName) ? floorName : (floors.first ?? "Main")
+    }
+
     private var boulders: [WatchBoulderRow] {
-        let rows = manager.gymWalls.flatMap { wall in
-            wall.routes.map { WatchBoulderRow(wall: wall, pin: $0) }
-        }
+        let rows = manager.gymWalls
+            .filter { $0.floor == selectedFloor }
+            .flatMap { wall in
+                wall.routes.map { WatchBoulderRow(wall: wall, pin: $0) }
+            }
         return rows.sorted { lhs, rhs in
             let left = gradeRank(lhs.pin)
             let right = gradeRank(rhs.pin)
@@ -233,24 +244,34 @@ struct WatchLogPage: View {
 
     var body: some View {
         Group {
-            if boulders.isEmpty {
+            if manager.gymWalls.flatMap(\.routes).isEmpty {
                 fallbackLogger
             } else {
-                List(boulders) { row in
-                    NavigationLink {
-                        WatchBoulderDetail(wall: row.wall, pin: row.pin, manager: manager)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(Color(hold: row.pin.holdColor))
-                                .frame(width: 16, height: 16)
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text(row.pin.grade)
-                                    .font(.headline)
-                                Text("\(row.pin.holdColor.displayName) · \(row.wall.name == "Untitled" ? "Unnamed wall" : row.wall.name)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+                List {
+                    if floors.count > 1 {
+                        Picker("Level", selection: $floorName) {
+                            ForEach(floors, id: \.self) { floor in
+                                Text(floor).tag(floor)
+                            }
+                        }
+                        .pickerStyle(.navigationLink)
+                    }
+                    ForEach(boulders) { row in
+                        NavigationLink {
+                            WatchBoulderDetail(wall: row.wall, pin: row.pin, manager: manager)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(Color(hold: row.pin.holdColor))
+                                    .frame(width: 16, height: 16)
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(row.pin.grade)
+                                        .font(.headline)
+                                    Text("\(row.pin.holdColor.displayName) · \(row.wall.name == "Untitled" ? "Unnamed wall" : row.wall.name)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
                             }
                         }
                     }
@@ -258,9 +279,19 @@ struct WatchLogPage: View {
                 .listStyle(.carousel)
             }
         }
-        .navigationTitle(manager.gymName ?? "Send")
+        .navigationTitle(floors.count > 1 ? selectedFloor : (manager.gymName ?? "Send"))
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { WatchStore.shared.requestGymMap() }
+        .onAppear {
+            WatchStore.shared.requestGymMap()
+            if floors.contains(floorName) == false {
+                floorName = floors.first ?? ""
+            }
+        }
+        .onChange(of: floors) { _, names in
+            if names.contains(floorName) == false {
+                floorName = names.first ?? ""
+            }
+        }
     }
 
     private func gradeRank(_ pin: WatchRoutePin) -> Int {

@@ -80,6 +80,7 @@ struct GymMapView: View {
     @State private var newFloorDraft = ""
     @State private var showMapSettings = false
     @State private var showWallList = false
+    @State private var showUnlockFloor = false
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -88,6 +89,18 @@ struct GymMapView: View {
 
     private var currentFloorDisplay: String {
         FloorPlanMath.defaultFloorName(gym.currentFloorName)
+    }
+
+    private var floorIsLocked: Bool {
+        lockedFloorNames.contains(currentFloorDisplay)
+    }
+
+    private var lockedFloorNames: Set<String> {
+        Set(
+            gym.lockedFloors
+                .split(separator: ",")
+                .map { FloorPlanMath.defaultFloorName(String($0)) }
+        )
     }
 
     private var activeFloorStorage: String {
@@ -142,6 +155,9 @@ struct GymMapView: View {
                 }
                 return "Drag the next side. Bring it to the start and it snaps closed."
             }
+        }
+        if selectedWall != nil, floorIsLocked {
+            return "\(currentFloorDisplay) is locked. You can still place and move routes."
         }
         if selectedWall != nil {
             return "Drag a pin onto another to circle them around its tip. Hold a cluster to move it. Drag one pin away to unmerge."
@@ -201,7 +217,9 @@ struct GymMapView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                addShapesMenu
+                if floorIsLocked == false {
+                    addShapesMenu
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -338,6 +356,23 @@ struct GymMapView: View {
                     Toggle("Vertices", isOn: $snapVertices)
                 }
                 Section {
+                    if floorIsLocked {
+                        Text("Walls on \(currentFloorDisplay) are locked. Route colors and grades can still change. Unlock only to fix the floor plan.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Button("Unlock \(currentFloorDisplay)", role: .destructive) {
+                            showUnlockFloor = true
+                        }
+                    } else {
+                        Text("Lock the walls when this floor is finished. Later updates can move routes without redrawing the gym.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Button("Lock \(currentFloorDisplay)") {
+                            setFloorLocked(true)
+                        }
+                    }
+                }
+                Section {
                     Button("Fit gym") { fitGymToScreen() }
                     Button("Reset zoom") {
                         zoomScale = 1
@@ -359,6 +394,18 @@ struct GymMapView: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .confirmationDialog(
+            "Unlock \(currentFloorDisplay)?",
+            isPresented: $showUnlockFloor,
+            titleVisibility: .visible
+        ) {
+            Button("Unlock floor plan", role: .destructive) {
+                setFloorLocked(false)
+            }
+            Button("Keep locked", role: .cancel) {}
+        } message: {
+            Text("Walls can be moved and deleted again. Routes stay where they are.")
+        }
     }
 
     private var wallListSheet: some View {
@@ -398,6 +445,10 @@ struct GymMapView: View {
                             .font(.caption.bold())
                             .disabled(wall.floorPlanPoints().count < 2)
                     }
+                } else if floorIsLocked {
+                    Text("Floor locked")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
                 } else {
                     Button("Edit shape") {
                         drawTool = nil
@@ -425,13 +476,15 @@ struct GymMapView: View {
                     }
             }
 
-            Button(role: .destructive) {
-                wallPendingDelete = wall
-            } label: {
-                Label("Delete wall", systemImage: "trash")
-                    .font(.caption.bold())
+            if floorIsLocked == false {
+                Button(role: .destructive) {
+                    wallPendingDelete = wall
+                } label: {
+                    Label("Delete wall", systemImage: "trash")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderless)
         }
         .padding(14)
         .background(.bar, in: RoundedRectangle(cornerRadius: 14))
@@ -600,7 +653,7 @@ struct GymMapView: View {
                     nameTag(wall, in: size)
                 }
 
-                if editingShape, routesWall == nil, let wall = selectedWall {
+                if editingShape, floorIsLocked == false, routesWall == nil, let wall = selectedWall {
                     editHandles(for: wall, in: size)
                 }
 
@@ -1149,6 +1202,15 @@ struct GymMapView: View {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if draggingRouteID != nil { return }
+                if floorIsLocked {
+                    let start = normalized(value.startLocation, in: size)
+                    if nearAnyRoute(start) { return }
+                    panOffset = CGSize(
+                        width: panAnchor.width + value.translation.width,
+                        height: panAnchor.height + value.translation.height
+                    )
+                    return
+                }
 
                 if drawTool == nil {
                     let start = normalized(value.startLocation, in: size)
@@ -1228,6 +1290,14 @@ struct GymMapView: View {
                 }
             }
             .onEnded { value in
+                if floorIsLocked {
+                    let moved = hypot(value.translation.width, value.translation.height) >= 12
+                    panAnchor = panOffset
+                    if moved == false {
+                        handleBrowseTap(at: normalized(value.location, in: size))
+                    }
+                    return
+                }
                 let moved = hypot(value.translation.width, value.translation.height) >= 12
                 let end = normalized(value.location, in: size)
                 let start = normalized(value.startLocation, in: size)
@@ -1640,6 +1710,21 @@ struct GymMapView: View {
     }
 
     // MARK: - Floors
+
+    private func setFloorLocked(_ locked: Bool) {
+        var names = lockedFloorNames
+        if locked {
+            names.insert(currentFloorDisplay)
+            editingShape = false
+            drawTool = nil
+            polygonDraft = []
+            rubberBand = nil
+        } else {
+            names.remove(currentFloorDisplay)
+        }
+        gym.lockedFloors = names.sorted().joined(separator: ",")
+        persistMap()
+    }
 
     private func addFloor() {
         let name = FloorPlanMath.optionalWallName(newFloorDraft)

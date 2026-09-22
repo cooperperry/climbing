@@ -18,6 +18,8 @@ final class ClimbGym {
     var underlayOpacity: Double = 0.4
     /// Which floor is shown on the map editor.
     var currentFloorName: String?
+    /// Display names of floors whose walls are locked. Routes on a locked floor can still change.
+    var lockedFloors: String = ""
 
     @Relationship(deleteRule: .cascade, inverse: \GymArea.gym)
     var areas: [GymArea] = []

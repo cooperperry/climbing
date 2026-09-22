@@ -72,8 +72,8 @@ struct WatchGymMap: View {
         let spanX = max(maxX - minX, 0.08)
         let spanY = max(maxY - minY, 0.08)
         let scale = min(
-            (Double(size.width) - 28) / spanX,
-            (Double(size.height) - 28) / spanY
+            (Double(size.width) - 12) / spanX,
+            (Double(size.height) - 12) / spanY
         )
         let originX = (Double(size.width) - spanX * scale) / 2
         let originY = (Double(size.height) - spanY * scale) / 2
@@ -121,37 +121,44 @@ struct WatchBoulderDetail: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(wallLabel)
-                .font(.caption2.bold())
-                .foregroundStyle(wall.name == "Untitled" ? Color.orange : Color.secondary)
-                .lineLimit(1)
+        ZStack(alignment: .bottom) {
             WatchGymMap(wall: wall, highlightedID: pin.id)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
-            Text("Confirm this is \(pin.label).")
-                .font(.system(size: 11, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-            HStack(spacing: 6) {
-                Button("Flashed") {
-                    manager.selectLogWall(wall.name)
-                    manager.logRoute(pin, outcome: .flash)
-                    dismiss()
+            VStack(spacing: 3) {
+                Text(wallLabel)
+                    .font(.caption2.bold())
+                    .foregroundStyle(wall.name == "Untitled" ? Color.orange : Color.white)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    logButton("Flashed", color: .yellow) {
+                        manager.selectLogWall(wall.name)
+                        manager.logRoute(pin, outcome: .flash)
+                        dismiss()
+                    }
+                    logButton("Topped", color: .green) {
+                        manager.selectLogWall(wall.name)
+                        manager.logRoute(pin, outcome: .send)
+                        dismiss()
+                    }
                 }
-                .tint(.yellow)
-                Button("Topped") {
-                    manager.selectLogWall(wall.name)
-                    manager.logRoute(pin, outcome: .send)
-                    dismiss()
-                }
-                .tint(.green)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .navigationTitle(pin.label)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func logButton(_ title: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.bold())
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity, minHeight: 26)
+                .background(color, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var wallLabel: String {
