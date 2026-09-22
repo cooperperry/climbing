@@ -404,7 +404,10 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
 
     private func gymContext(in context: ModelContext) -> WatchGymContext {
         guard let gym = currentGym(in: context) else { return .empty }
-        let areas = gym.areas.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let floor = FloorPlanMath.defaultFloorName(gym.currentFloorName)
+        let areas = gym.areas
+            .filter { $0.displayFloor == floor }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let walls = areas.map { area in
             WatchWall(
                 name: FloorPlanMath.displayWallName(area.name),
@@ -419,7 +422,9 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
                             y: $0.y,
                             discipline: $0.disciplineRaw
                         )
-                    }
+                    },
+                outline: area.floorPlanPoints().map { WatchOutlinePoint(x: $0.x, y: $0.y) },
+                closed: area.shapeClosed
             )
         }
         let current = WatchGymContext.pickWall(

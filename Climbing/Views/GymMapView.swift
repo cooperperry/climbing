@@ -1,3 +1,4 @@
+import Observation
 import PhotosUI
 import SwiftUI
 import SwiftData
@@ -67,7 +68,6 @@ struct GymMapView: View {
     @State private var draftColor: HoldColor = .blue
     @State private var extendingWallID: UUID?
     @State private var draggingRouteID: UUID?
-    @State private var draggingGroupKey: String?
     @State private var routeDragSession = RouteDragSession()
     @State private var mergeTargetRouteID: UUID?
     @State private var mergingRouteIDs: Set<UUID> = []
@@ -137,7 +137,7 @@ struct GymMapView: View {
                 if polygonDraft.isEmpty {
                     return "Drag each side — keep going to build a full shape."
                 }
-                return "Drag the next side — near the start closes it, or tap Done."
+                return "Drag the next side. Bring it to the start and it snaps closed."
             }
         }
         if selectedWall != nil {
@@ -604,9 +604,9 @@ struct GymMapView: View {
                 }
             }
             .frame(width: size.width, height: size.height)
-            .coordinateSpace(name: "gymMap")
             .scaleEffect(effectiveZoom)
             .offset(panOffset)
+            .coordinateSpace(name: "gymMap")
             .contentShape(Rectangle())
             .gesture(canvasGesture(in: size))
             .simultaneousGesture(zoomGesture)
@@ -725,7 +725,7 @@ struct GymMapView: View {
             let pos = PlanPoint(x: route.x, y: route.y)
             let merging = mergingRouteIDs.contains(route.id)
             let isTarget = mergeTargetRouteID == route.id
-            let movingGroup = draggingGroupKey != nil && route.groupKey == draggingGroupKey
+            let movingGroup = routeDragSession.movingCluster && route.groupKey == routeDragSession.groupKey
             let isDragging = draggingRouteID == route.id || movingGroup
             let tipAngle = pinTipAngle(for: route)
             let head = RouteMapPin.headOffset(for: tipAngle)
@@ -755,7 +755,7 @@ struct GymMapView: View {
             .animation(Self.routeSpring, value: merging)
             .animation(Self.routeSpring, value: isTarget)
             .animation(Self.routeSpring, value: tipAngle)
-            .animation(Self.routeSpring, value: draggingGroupKey)
+            .animation(Self.routeSpring, value: routeDragSession.groupKey)
             .highPriorityGesture(routeDrag(route, in: size))
         }
     }
@@ -840,7 +840,7 @@ struct GymMapView: View {
     }
 
     private func vertexDrag(wall: GymArea, index: Int, in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("gymMap"))
             .onChanged { value in
                 var pts = wall.floorPlanPoints()
                 guard index < pts.count else { return }
@@ -864,60 +864,60 @@ struct GymMapView: View {
     }
 
     private func routeDrag(_ route: GymRoute, in size: CGSize) -> some Gesture {
-        let moveCluster = LongPressGesture(minimumDuration: 0.42)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("gymMap")))
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("gymMap"))
             .onChanged { value in
-                switch value {
-                case .first(false):
-                    routeDragSession.prepareHaptic()
-                case .first(true):
-                    beginClusterMove(route)
-                case .second(true, let drag?):
-                    beginClusterMove(route)
-                    let board = canvasSize == .zero ? size : canvasSize
-                    shiftCluster(by: drag.translation, in: board)
-                default:
-                    break
-                }
-            }
-            .onEnded { _ in
-                guard routeDragSession.movingCluster else { return }
-                draggingGroupKey = nil
-                draggingRouteID = nil
-                mergeTargetRouteID = nil
-                routeDragSession.end()
-                persistMap()
-            }
-
-        let moveOne = DragGesture(minimumDistance: 0, coordinateSpace: .named("gymMap"))
-            .onChanged { value in
-                guard routeDragSession.movingCluster == false else { return }
-                draggingRouteID = route.id
                 let board = canvasSize == .zero ? size : canvasSize
-                let origin = routeDragSession.begin(route)
-                var point = PlanPoint(
-                    x: origin.x + value.translation.width / max(board.width, 1),
-                    y: origin.y + value.translation.height / max(board.height, 1)
+                let finger = normalized(value.location, in: board)
+                if routeDragSession.routeID != route.id {
+                    routeDragSession.beginTracking(route, finger: finger)
+                    scheduleClusterHold(for: route, session: routeDragSession)
+                }
+                routeDragSession.lastFinger = finger
+                let start = routeDragSession.fingerStart ?? finger
+                let slop = 16 / max(effectiveZoom, 0.5) / max(board.width, 1)
+                if FloorPlanMath.distance(finger, start) > slop {
+                    routeDragSession.cancelHold()
+                }
+
+                if routeDragSession.movingCluster {
+                    let lock = routeDragSession.fingerAtLock ?? finger
+                    shiftCluster(dx: finger.x - lock.x, dy: finger.y - lock.y)
+                    return
+                }
+
+                draggingRouteID = route.id
+                let head = RouteMapPin.headOffset(for: pinTipAngle(for: route))
+                var tip = PlanPoint(
+                    x: finger.x - Double(head.width) / max(board.width, 1),
+                    y: finger.y - Double(head.height) / max(board.height, 1)
                 )
                 if let other = nearestRoutePin(
-                    to: point,
+                    to: tip,
                     excluding: route.id,
                     ignoringGroup: route.groupKey,
                     draggedAngle: pinTipAngle(for: route),
                     in: board
                 ) {
                     mergeTargetRouteID = other.id
-                    point = FloorPlanMath.magneticPull(
-                        from: point,
+                    tip = FloorPlanMath.magneticPull(
+                        from: tip,
                         toward: PlanPoint(x: other.x, y: other.y)
                     )
                 } else {
                     mergeTargetRouteID = nil
                 }
-                route.setPin(x: point.x, y: point.y)
+                route.setPin(x: tip.x, y: tip.y)
             }
             .onEnded { _ in
-                guard routeDragSession.movingCluster == false else { return }
+                let movedCluster = routeDragSession.movingCluster
+                routeDragSession.cancelHold()
+                if movedCluster {
+                    draggingRouteID = nil
+                    mergeTargetRouteID = nil
+                    routeDragSession.end()
+                    persistMap()
+                    return
+                }
                 if let targetID = mergeTargetRouteID,
                    let target = routeOnFloor(id: targetID) {
                     snapMergeRoutes(dragged: route, onto: target)
@@ -937,30 +937,23 @@ struct GymMapView: View {
                 routeDragSession.end()
                 persistMap()
             }
-
-        return moveCluster.exclusively(before: moveOne)
     }
 
-    /// Hold still on a merged pin, then drag. Every pin in the group keeps its place in the circle.
-    private func beginClusterMove(_ route: GymRoute) {
-        guard routeDragSession.movingCluster == false else { return }
-        let mates: [GymRoute]
-        if let key = route.groupKey {
-            let grouped = allFloorRoutes().filter { $0.groupKey == key }
-            mates = grouped.count > 1 ? grouped : [route]
-        } else {
-            mates = [route]
-        }
-        routeDragSession.armCluster(mates)
+    /// After a short still hold, the whole merged circle follows the finger.
+    private func scheduleClusterHold(for route: GymRoute, session: RouteDragSession) {
+        guard let key = route.groupKey else { return }
+        let mates = allFloorRoutes().filter { $0.groupKey == key }
         guard mates.count > 1 else { return }
-        draggingGroupKey = route.groupKey
-        draggingRouteID = route.id
-        routeDragSession.playHaptic()
+        let token = session.holdToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            guard session.holdToken == token, session.routeID == route.id else { return }
+            guard session.movingCluster == false else { return }
+            session.armCluster(mates, finger: session.lastFinger ?? session.fingerStart)
+            session.playHaptic()
+        }
     }
 
-    private func shiftCluster(by translation: CGSize, in board: CGSize) {
-        let dx = translation.width / max(board.width, 1)
-        let dy = translation.height / max(board.height, 1)
+    private func shiftCluster(dx: Double, dy: Double) {
         for (id, origin) in routeDragSession.clusterOrigins {
             guard let mate = routeOnFloor(id: id) else { continue }
             mate.setPin(x: origin.x + dx, y: origin.y + dy)
@@ -1072,13 +1065,19 @@ struct GymMapView: View {
     }
 
     private func addSegmentDrag(wall: GymArea, in size: CGSize, fromStart: Bool) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("gymMap"))
             .onChanged { value in
                 let board = canvasSize == .zero ? size : canvasSize
                 var pts = wall.floorPlanPoints()
                 let anchor = fromStart ? pts.first : pts.last
                 let raw = normalized(value.location, in: board)
-                let point = applySnaps(to: raw, origin: anchor, excluding: wall)
+                var point = applySnaps(to: raw, origin: anchor, excluding: wall)
+                if pts.count >= 3 {
+                    let otherEnd = fromStart ? pts.last : pts.first
+                    if let otherEnd, FloorPlanMath.distance(point, otherEnd) < FloorPlanMath.closeSnapDistance {
+                        point = otherEnd
+                    }
+                }
 
                 if extendingWallID != wall.id {
                     extendingWallID = wall.id
@@ -1178,7 +1177,12 @@ struct GymMapView: View {
                     rubberBand = RubberBand(start: origin, current: current)
                 case .polygon:
                     let from = polygonDraft.last ?? start
-                    let current = applySnaps(to: point, origin: from, excluding: nil)
+                    var current = applySnaps(to: point, origin: from, excluding: nil)
+                    if polygonDraft.count >= 2,
+                       FloorPlanMath.shouldClosePolygon(draft: polygonDraft, to: current),
+                       let first = polygonDraft.first {
+                        current = first
+                    }
                     rubberBand = RubberBand(start: from, current: current)
                 }
             }
@@ -1856,31 +1860,44 @@ private struct CircleSpot: Shape {
 
 /// Remembers where a pin drag started. A class so updates are visible inside the gesture
 /// before SwiftUI flushes `@State`.
+@Observable
 private final class RouteDragSession {
     var routeID: UUID?
     var origin: PlanPoint?
+    var fingerStart: PlanPoint?
+    var lastFinger: PlanPoint?
+    var fingerAtLock: PlanPoint?
     var movingCluster = false
+    var groupKey: String?
     var clusterOrigins: [UUID: PlanPoint] = [:]
+    var holdToken = 0
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
-    func begin(_ route: GymRoute) -> PlanPoint {
-        if routeID != route.id || origin == nil {
-            routeID = route.id
-            origin = PlanPoint(x: route.x, y: route.y)
-        }
-        return origin ?? PlanPoint(x: route.x, y: route.y)
+    func beginTracking(_ route: GymRoute, finger: PlanPoint) {
+        routeID = route.id
+        origin = PlanPoint(x: route.x, y: route.y)
+        fingerStart = finger
+        lastFinger = finger
+        fingerAtLock = nil
+        movingCluster = false
+        groupKey = nil
+        clusterOrigins = [:]
+        holdToken += 1
+        haptic.prepare()
     }
 
-    func prepareHaptic() {
-        haptic.prepare()
+    func cancelHold() {
+        holdToken += 1
     }
 
     func playHaptic() {
         haptic.impactOccurred(intensity: 0.9)
     }
 
-    func armCluster(_ routes: [GymRoute]) {
+    func armCluster(_ routes: [GymRoute], finger: PlanPoint?) {
         movingCluster = true
+        groupKey = routes.first?.groupKey
+        fingerAtLock = finger
         clusterOrigins = Dictionary(uniqueKeysWithValues: routes.map {
             ($0.id, PlanPoint(x: $0.x, y: $0.y))
         })
@@ -1889,8 +1906,13 @@ private final class RouteDragSession {
     func end() {
         routeID = nil
         origin = nil
+        fingerStart = nil
+        lastFinger = nil
+        fingerAtLock = nil
         movingCluster = false
+        groupKey = nil
         clusterOrigins = [:]
+        holdToken += 1
     }
 }
 

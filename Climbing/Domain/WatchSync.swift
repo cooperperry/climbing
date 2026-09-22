@@ -70,16 +70,56 @@ public struct WatchRoutePin: Equatable, Sendable, Codable, Identifiable {
     }
 }
 
-/// A wall on the Watch map: durable name plus today's pins.
+/// A point on the overhead gym map, in 0...1 board space.
+public struct WatchOutlinePoint: Equatable, Sendable, Codable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+}
+
+/// A wall on the Watch map: durable name, overhead outline, and today's pins.
 public struct WatchWall: Equatable, Sendable, Codable, Identifiable {
     public var name: String
     public var routes: [WatchRoutePin]
+    public var outline: [WatchOutlinePoint]
+    public var closed: Bool
 
     public var id: String { name }
 
-    public init(name: String, routes: [WatchRoutePin] = []) {
+    public init(
+        name: String,
+        routes: [WatchRoutePin] = [],
+        outline: [WatchOutlinePoint] = [],
+        closed: Bool = false
+    ) {
         self.name = name
         self.routes = routes
+        self.outline = outline
+        self.closed = closed
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, routes, outline, closed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        routes = try container.decodeIfPresent([WatchRoutePin].self, forKey: .routes) ?? []
+        outline = try container.decodeIfPresent([WatchOutlinePoint].self, forKey: .outline) ?? []
+        closed = try container.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(routes, forKey: .routes)
+        try container.encode(outline, forKey: .outline)
+        try container.encode(closed, forKey: .closed)
     }
 }
 

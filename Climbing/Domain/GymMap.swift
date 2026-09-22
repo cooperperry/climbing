@@ -394,8 +394,8 @@ public enum FloorPlanMath {
         return name.isEmpty ? "Untitled" : name
     }
 
-    /// Snap-close radius when finishing a polygon near its start.
-    public static let closeSnapDistance: Double = 0.055
+    /// Snap-close radius when finishing a polygon or bringing an open wall's ends together.
+    public static let closeSnapDistance: Double = 0.09
 
     public static func shouldClosePolygon(draft: [PlanPoint], to end: PlanPoint) -> Bool {
         guard draft.count >= 2, let first = draft.first else { return false }
@@ -615,7 +615,7 @@ public enum FloorPlanMath {
     /// True when an open polyline's ends are close enough to become a closed shape.
     public static func shouldCloseOpenShape(points: [PlanPoint]) -> Bool {
         guard points.count >= 3, let first = points.first, let last = points.last else { return false }
-        return distance(first, last) < joinSnapDistance
+        return distance(first, last) < closeSnapDistance
     }
 
     /// Merge two open polylines when any pair of endpoints is within `threshold`.

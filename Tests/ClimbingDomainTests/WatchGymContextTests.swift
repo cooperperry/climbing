@@ -22,6 +22,27 @@ final class WatchGymContextTests: XCTestCase {
         XCTAssertEqual(decoded.wallNames, ["Cave", "Comp"])
         XCTAssertEqual(decoded.wall(named: "Cave")?.routes.first?.grade, "V4")
         XCTAssertEqual(decoded.wall(named: "Cave")?.routes.first?.holdColor, .blue)
+        XCTAssertTrue(decoded.wall(named: "Cave")?.outline.isEmpty ?? false)
+    }
+
+    func testWallOutlineRoundTripsAndLegacyOmitsIt() throws {
+        let original = WatchWall(
+            name: "Cave",
+            routes: [],
+            outline: [WatchOutlinePoint(x: 0.2, y: 0.2), WatchOutlinePoint(x: 0.8, y: 0.8)],
+            closed: true
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(WatchWall.self, from: data)
+        XCTAssertEqual(decoded.outline.count, 2)
+        XCTAssertTrue(decoded.closed)
+
+        let legacy = """
+        {"name":"Cave","routes":[]}
+        """.data(using: .utf8)!
+        let old = try JSONDecoder().decode(WatchWall.self, from: legacy)
+        XCTAssertTrue(old.outline.isEmpty)
+        XCTAssertFalse(old.closed)
     }
 
     func testLegacyWallNameArrayStillDecodes() throws {
