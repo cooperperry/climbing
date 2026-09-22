@@ -750,8 +750,8 @@ struct GymMapView: View {
             )
             .opacity(merging ? 0.94 : 1.0)
             .position(pixel(pos, in: size))
-            .animation(movingGroup ? nil : Self.routeSpring, value: route.x)
-            .animation(movingGroup ? nil : Self.routeSpring, value: route.y)
+            .animation(isDragging ? nil : Self.routeSpring, value: route.x)
+            .animation(isDragging ? nil : Self.routeSpring, value: route.y)
             .animation(Self.routeSpring, value: merging)
             .animation(Self.routeSpring, value: isTarget)
             .animation(Self.routeSpring, value: tipAngle)
@@ -881,15 +881,18 @@ struct GymMapView: View {
 
                 if routeDragSession.movingCluster {
                     let lock = routeDragSession.fingerAtLock ?? finger
-                    shiftCluster(dx: finger.x - lock.x, dy: finger.y - lock.y)
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        shiftCluster(dx: finger.x - lock.x, dy: finger.y - lock.y)
+                    }
                     return
                 }
 
                 draggingRouteID = route.id
-                let head = RouteMapPin.headOffset(for: pinTipAngle(for: route))
-                var tip = PlanPoint(
-                    x: finger.x - Double(head.width) / max(board.width, 1),
-                    y: finger.y - Double(head.height) / max(board.height, 1)
+                let tip = PlanPoint(
+                    x: finger.x + routeDragSession.grabDeltaX,
+                    y: finger.y + routeDragSession.grabDeltaY
                 )
                 if let other = nearestRoutePin(
                     to: tip,
@@ -899,14 +902,14 @@ struct GymMapView: View {
                     in: board
                 ) {
                     mergeTargetRouteID = other.id
-                    tip = FloorPlanMath.magneticPull(
-                        from: tip,
-                        toward: PlanPoint(x: other.x, y: other.y)
-                    )
                 } else {
                     mergeTargetRouteID = nil
                 }
-                route.setPin(x: tip.x, y: tip.y)
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    route.setPin(x: tip.x, y: tip.y)
+                }
             }
             .onEnded { _ in
                 let movedCluster = routeDragSession.movingCluster
@@ -1723,19 +1726,18 @@ struct GymMapView: View {
         let name = trimmedClimberName
         guard let grade = logGrade, GymJoinMath.isUsableName(name) else { return }
         ClimberIdentity.name = name
-        let points = area.floorPlanPoints()
-        let nextCount = area.routes.count + 1
-        let preferRing = area.shapeClosed || nextCount >= 3
-        let slots = preferRing
-            ? FloorPlanMath.layoutRoutesMerged(count: nextCount, on: points, closed: area.shapeClosed)
-            : FloorPlanMath.layoutRoutes(count: nextCount, on: points, closed: area.shapeClosed)
-        let existing = area.routes.sorted { $0.createdAt < $1.createdAt }
-        let start = FloorPlanMath.centroid(of: points)
+        let anchor = FloorPlanMath.centroid(of: area.floorPlanPoints())
+        let step = Double(area.routes.count)
+        let angle = step * 1.15
+        let spot = PlanPoint(
+            x: anchor.x + cos(angle) * 0.045,
+            y: anchor.y + sin(angle) * 0.045
+        )
         let route = GymRoute(
             grade: grade,
             colorName: draftColor.rawValue,
-            x: start.x,
-            y: start.y,
+            x: spot.x,
+            y: spot.y,
             discipline: logDiscipline,
             wall: area,
             updatedBy: name,
@@ -1743,7 +1745,6 @@ struct GymMapView: View {
             groupKey: nil
         )
         context.insert(route)
-        animateRouteLayout(existing + [route], to: slots)
         persistMap()
     }
 
@@ -1812,22 +1813,15 @@ struct GymMapView: View {
     }
 
     private func removeRoute(_ route: GymRoute, on area: GymArea) {
+        let key = route.groupKey
         context.delete(route)
-        let remaining = area.routes.filter { $0.id != route.id }.sorted { $0.createdAt < $1.createdAt }
-        if remaining.isEmpty == false {
-            let preferRing = area.shapeClosed || remaining.count >= 3
-            let slots = preferRing
-                ? FloorPlanMath.layoutRoutesMerged(
-                    count: remaining.count,
-                    on: area.floorPlanPoints(),
-                    closed: area.shapeClosed
-                )
-                : FloorPlanMath.layoutRoutes(
-                    count: remaining.count,
-                    on: area.floorPlanPoints(),
-                    closed: area.shapeClosed
-                )
-            animateRouteLayout(remaining, to: slots)
+        if let key {
+            let rest = area.routes.filter { $0.id != route.id && $0.groupKey == key }
+            if rest.count <= 1 {
+                for mate in rest {
+                    mate.groupKey = nil
+                }
+            }
         }
         persistMap()
     }
@@ -1867,6 +1861,8 @@ private final class RouteDragSession {
     var fingerStart: PlanPoint?
     var lastFinger: PlanPoint?
     var fingerAtLock: PlanPoint?
+    var grabDeltaX: Double = 0
+    var grabDeltaY: Double = 0
     var movingCluster = false
     var groupKey: String?
     var clusterOrigins: [UUID: PlanPoint] = [:]
@@ -1874,10 +1870,13 @@ private final class RouteDragSession {
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
     func beginTracking(_ route: GymRoute, finger: PlanPoint) {
+        let tip = PlanPoint(x: route.x, y: route.y)
         routeID = route.id
-        origin = PlanPoint(x: route.x, y: route.y)
+        origin = tip
         fingerStart = finger
         lastFinger = finger
+        grabDeltaX = tip.x - finger.x
+        grabDeltaY = tip.y - finger.y
         fingerAtLock = nil
         movingCluster = false
         groupKey = nil

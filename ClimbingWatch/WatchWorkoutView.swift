@@ -212,6 +212,7 @@ struct WatchMetricsPage: View {
 struct WatchLogPage: View {
     var manager: WorkoutManager
     @State private var pendingRoute: WatchRoutePin?
+    @State private var wallIndex = 0
 
     private var grades: [String] {
         manager.logDiscipline.usesRopeGrades
@@ -219,22 +220,38 @@ struct WatchLogPage: View {
             : GradeScaleTemplate.standardVScale().grades
     }
 
-    private var showMap: Bool {
-        manager.gymWalls.contains { $0.outline.count >= 2 || $0.routes.isEmpty == false }
+    private var walls: [WatchWall] {
+        manager.gymWalls
+    }
+
+    private var focusedWall: WatchWall? {
+        guard walls.isEmpty == false else { return nil }
+        let index = min(max(wallIndex, 0), walls.count - 1)
+        return walls[index]
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let gymName = manager.gymName {
-                Text(gymName)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 2) {
+            if walls.count > 1, let wall = focusedWall {
+                NavigationLink {
+                    WatchWallPicker(walls: walls, index: $wallIndex)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(wall.name)
+                            .font(.caption2.bold())
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
             }
 
-            if showMap {
+            if let wall = focusedWall {
                 ZStack {
-                    WatchGymMap(walls: manager.gymWalls) { pin in
+                    WatchGymMap(wall: wall) { pin in
                         pendingRoute = pin
                     }
                     if let pin = pendingRoute {
@@ -271,14 +288,17 @@ struct WatchLogPage: View {
 
             if let latest = manager.loggedSends.first {
                 Text(watchSendCaption(latest))
-                    .font(.caption.bold())
+                    .font(.caption2.bold())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
-        .navigationTitle("Send")
+        .navigationTitle(manager.gymName ?? "Send")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { WatchStore.shared.requestGymMap() }
+        .onChange(of: walls.map(\.id)) { _, _ in
+            wallIndex = min(wallIndex, max(walls.count - 1, 0))
+        }
     }
 
     private var fallbackLogger: some View {
