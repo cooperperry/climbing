@@ -15,6 +15,10 @@ final class GymArea {
     /// be named before anyone snaps it.
     var photoData: Data?
 
+    /// Polyline for this wall on the overhead floor plan (JSON `[PlanPoint]`).
+    /// When nil, the map uses a short default segment at `(x, y)`.
+    var shapePointsData: Data?
+
     /// Today's problems on this photo. Cleared on a set reset; send logs stay.
     @Relationship(deleteRule: .cascade, inverse: \GymRoute.wall)
     var routes: [GymRoute] = []
@@ -25,7 +29,8 @@ final class GymArea {
         x: Double,
         y: Double,
         gym: ClimbGym? = nil,
-        photoData: Data? = nil
+        photoData: Data? = nil,
+        shapePointsData: Data? = nil
     ) {
         self.id = id
         self.name = name
@@ -34,5 +39,29 @@ final class GymArea {
         self.y = clamped.y
         self.gym = gym
         self.photoData = photoData
+        self.shapePointsData = shapePointsData
+    }
+
+    var shapePoints: [PlanPoint] {
+        get { FloorPlanMath.decode(shapePointsData) }
+        set {
+            shapePointsData = FloorPlanMath.encode(newValue)
+            let center = FloorPlanMath.centroid(of: newValue)
+            x = center.x
+            y = center.y
+        }
+    }
+
+    /// Points drawn on the floor plan, including a generated segment for older walls.
+    func floorPlanPoints() -> [PlanPoint] {
+        let stored = shapePoints
+        if stored.isEmpty {
+            return FloorPlanMath.defaultSegment(anchor: PlanPoint(x: x, y: y))
+        }
+        return stored
+    }
+
+    func setFloorPlanPoints(_ points: [PlanPoint]) {
+        shapePoints = points
     }
 }
