@@ -72,7 +72,7 @@ struct GymMapView: View {
 
     private var hint: String {
         if selectedWall != nil {
-            return "Drag corners or the + to reshape. Empty space draws a new \(mode.title.lowercased())."
+            return "Drag corners or either + to extend. Trash deletes the shape."
         }
         switch mode {
         case .line:
@@ -178,8 +178,6 @@ struct GymMapView: View {
                     .font(.caption.bold())
                 Spacer(minLength: 4)
                 nameControl(for: wall)
-                Button("Delete", role: .destructive) { removeWall(wall) }
-                    .font(.caption.bold())
             }
 
             if isEditingName {
@@ -348,28 +346,66 @@ struct GymMapView: View {
     @ViewBuilder
     private func editHandles(for wall: GymArea, in size: CGSize) -> some View {
         let points = wall.floorPlanPoints()
+        let isOpenLine = wall.shapeClosed == false
+        let vertexSize: CGFloat = isOpenLine && points.count <= 3 ? 28 : 22
+
         ForEach(Array(points.enumerated()), id: \.offset) { index, pt in
             Circle()
                 .fill(Color.stravaOrange)
-                .frame(width: 22, height: 22)
+                .frame(width: vertexSize, height: vertexSize)
                 .overlay { Circle().strokeBorder(Color.white, lineWidth: 2) }
+                .contentShape(Circle().scale(1.4))
                 .position(pixel(pt, in: size))
                 .gesture(vertexDrag(wall: wall, index: index, in: size))
         }
 
-        if wall.shapeClosed == false, points.isEmpty == false {
-            let tip = FloorPlanMath.addSegmentHandle(after: points)
-            ZStack {
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 26, height: 26)
-                Image(systemName: "plus")
-                    .font(.caption.bold())
-                    .foregroundStyle(Color.stravaOrange)
-            }
-            .position(pixel(tip, in: size))
-            .gesture(addSegmentDrag(wall: wall, in: size))
+        if isOpenLine, points.isEmpty == false {
+            extendHandle(
+                at: FloorPlanMath.addSegmentHandle(after: points),
+                in: size,
+                wall: wall,
+                fromStart: false
+            )
+            extendHandle(
+                at: FloorPlanMath.addSegmentHandle(before: points),
+                in: size,
+                wall: wall,
+                fromStart: true
+            )
         }
+
+        trashHandle(for: wall, in: size)
+    }
+
+    private func extendHandle(at tip: PlanPoint, in size: CGSize, wall: GymArea, fromStart: Bool) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color.white)
+                .frame(width: 36, height: 36)
+                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+            Image(systemName: "plus")
+                .font(.body.bold())
+                .foregroundStyle(Color.stravaOrange)
+        }
+        .contentShape(Circle().scale(1.35))
+        .position(pixel(tip, in: size))
+        .gesture(addSegmentDrag(wall: wall, in: size, fromStart: fromStart))
+    }
+
+    private func trashHandle(for wall: GymArea, in size: CGSize) -> some View {
+        let anchor = FloorPlanMath.chromeAnchor(for: wall.floorPlanPoints())
+        return Button {
+            removeWall(wall)
+        } label: {
+            Image(systemName: "trash.fill")
+                .font(.body.bold())
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Color.red.opacity(0.92), in: Circle())
+                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+        }
+        .buttonStyle(.plain)
+        .position(pixel(anchor, in: size))
     }
 
     private func vertexDrag(wall: GymArea, index: Int, in size: CGSize) -> some Gesture {
@@ -384,7 +420,7 @@ struct GymMapView: View {
             .onEnded { _ in persistMap() }
     }
 
-    private func addSegmentDrag(wall: GymArea, in size: CGSize) -> some Gesture {
+    private func addSegmentDrag(wall: GymArea, in size: CGSize, fromStart: Bool) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 let board = canvasSize == .zero ? size : canvasSize
@@ -392,12 +428,20 @@ struct GymMapView: View {
                 if extendingWallID != wall.id {
                     extendingWallID = wall.id
                     var pts = wall.floorPlanPoints()
-                    pts.append(point)
+                    if fromStart {
+                        pts.insert(point, at: 0)
+                    } else {
+                        pts.append(point)
+                    }
                     wall.setFloorPlanPoints(pts)
                 } else {
                     var pts = wall.floorPlanPoints()
                     guard pts.isEmpty == false else { return }
-                    pts[pts.count - 1] = point
+                    if fromStart {
+                        pts[0] = point
+                    } else {
+                        pts[pts.count - 1] = point
+                    }
                     wall.setFloorPlanPoints(pts)
                 }
             }
@@ -422,12 +466,14 @@ struct GymMapView: View {
                             selectedWall = hit
                             renameDraft = hit.name
                         }
-                        if nearVertex(of: hit, point: start) || nearAddHandle(of: hit, point: start) {
+                        if nearVertex(of: hit, point: start) || nearAddHandle(of: hit, point: start) || nearTrash(of: hit, point: start) {
                             return
                         }
                         shapeDragOrigin = hit.floorPlanPoints()
                     } else if let selected = selectedWall,
-                              nearVertex(of: selected, point: start) || nearAddHandle(of: selected, point: start) {
+                              nearVertex(of: selected, point: start)
+                                || nearAddHandle(of: selected, point: start)
+                                || nearTrash(of: selected, point: start) {
                         dragEditsShape = true
                         return
                     } else {
@@ -437,7 +483,9 @@ struct GymMapView: View {
 
                 if dragEditsShape {
                     guard let wall = selectedWall else { return }
-                    if nearVertex(of: wall, point: start) || nearAddHandle(of: wall, point: start) {
+                    if nearVertex(of: wall, point: start)
+                        || nearAddHandle(of: wall, point: start)
+                        || nearTrash(of: wall, point: start) {
                         return
                     }
                     if shapeDragOrigin == nil {
@@ -619,7 +667,7 @@ struct GymMapView: View {
                 let b = pts[idx + 1]
                 let proj = FloorPlanMath.project(p: point, ontoSegmentFrom: a, to: b)
                 let d = FloorPlanMath.distance(point, proj)
-                if d < 0.05, best == nil || d < best!.1 {
+                if d < 0.07, best == nil || d < best!.1 {
                     best = (wall, d)
                 }
             }
@@ -628,13 +676,21 @@ struct GymMapView: View {
     }
 
     private func nearVertex(of wall: GymArea, point: PlanPoint) -> Bool {
-        wall.floorPlanPoints().contains { FloorPlanMath.distance($0, point) < 0.045 }
+        wall.floorPlanPoints().contains { FloorPlanMath.distance($0, point) < 0.055 }
     }
 
     private func nearAddHandle(of wall: GymArea, point: PlanPoint) -> Bool {
         guard wall.shapeClosed == false else { return false }
-        let tip = FloorPlanMath.addSegmentHandle(after: wall.floorPlanPoints())
-        return FloorPlanMath.distance(tip, point) < 0.05
+        let pts = wall.floorPlanPoints()
+        let after = FloorPlanMath.addSegmentHandle(after: pts)
+        let before = FloorPlanMath.addSegmentHandle(before: pts)
+        return FloorPlanMath.distance(after, point) < 0.07
+            || FloorPlanMath.distance(before, point) < 0.07
+    }
+
+    private func nearTrash(of wall: GymArea, point: PlanPoint) -> Bool {
+        let anchor = FloorPlanMath.chromeAnchor(for: wall.floorPlanPoints())
+        return FloorPlanMath.distance(anchor, point) < 0.06
     }
 
     private func normalized(_ location: CGPoint, in size: CGSize) -> PlanPoint {

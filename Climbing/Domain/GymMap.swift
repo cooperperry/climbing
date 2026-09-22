@@ -191,8 +191,31 @@ public enum FloorPlanMath {
     }
 
     /// Tip beyond the last vertex — used as a drag handle to add a segment.
-    public static func addSegmentHandle(after points: [PlanPoint], step: Double = 0.07) -> PlanPoint {
+    public static func addSegmentHandle(after points: [PlanPoint], step: Double = 0.09) -> PlanPoint {
         extendedPoint(after: points, step: step)
+    }
+
+    /// Tip beyond the first vertex — extend an open line from the other end.
+    public static func addSegmentHandle(before points: [PlanPoint], step: Double = 0.09) -> PlanPoint {
+        guard points.count >= 2 else {
+            let anchor = points.first ?? PlanPoint(x: 0.5, y: 0.5)
+            return PlanPoint(x: anchor.x - step, y: anchor.y)
+        }
+        let first = points[0]
+        let next = points[1]
+        let dx = first.x - next.x
+        let dy = first.y - next.y
+        let len = hypot(dx, dy)
+        guard len > 1e-6 else {
+            return PlanPoint(x: first.x - step, y: first.y)
+        }
+        return PlanPoint(x: first.x + dx / len * step, y: first.y + dy / len * step)
+    }
+
+    /// Trash / chrome offset above the shape centroid in board space.
+    public static func chromeAnchor(for points: [PlanPoint]) -> PlanPoint {
+        let c = centroid(of: points)
+        return PlanPoint(x: c.x, y: max(0.04, c.y - 0.07))
     }
 
     /// Closest point on the segment `a`–`b` to `p`.

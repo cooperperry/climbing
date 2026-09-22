@@ -133,4 +133,24 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(handle.x, 0.3, accuracy: 1e-6)
         XCTAssertEqual(handle.y, 0.6, accuracy: 1e-6)
     }
+
+    func testAddSegmentHandleBeforeStart() {
+        let points = [
+            PlanPoint(x: 0.3, y: 0.3),
+            PlanPoint(x: 0.3, y: 0.5),
+        ]
+        let handle = FloorPlanMath.addSegmentHandle(before: points, step: 0.1)
+        XCTAssertEqual(handle.x, 0.3, accuracy: 1e-6)
+        XCTAssertEqual(handle.y, 0.2, accuracy: 1e-6)
+    }
+
+    func testChromeAnchorSitsAboveCentroid() {
+        let points = [
+            PlanPoint(x: 0.4, y: 0.5),
+            PlanPoint(x: 0.6, y: 0.5),
+        ]
+        let chrome = FloorPlanMath.chromeAnchor(for: points)
+        XCTAssertEqual(chrome.x, 0.5, accuracy: 1e-6)
+        XCTAssertLessThan(chrome.y, 0.5)
+    }
 }
