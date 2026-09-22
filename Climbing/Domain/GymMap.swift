@@ -577,16 +577,15 @@ public enum FloorPlanMath {
     }
 
     /// Upper semi-circle of map pins (screen y-down: arc goes left → up → right).
-    /// Sweep is slightly inset from a flat diameter so a 2-pin merge still fans upward.
     public static func semiCircleSlots(
         count: Int,
         center: PlanPoint,
         radius: Double,
-        startAngle: Double = .pi + 0.4,
-        sweep: Double = .pi - 0.8
+        startAngle: Double = .pi,
+        sweep: Double = .pi
     ) -> [PlanPoint] {
         guard count > 0 else { return [] }
-        let r = max(radius, 0.03)
+        let r = max(radius, 0.05)
         if count == 1 {
             let angle = startAngle + sweep / 2
             return [PlanPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * r)]
@@ -601,21 +600,32 @@ public enum FloorPlanMath {
         }
     }
 
-    /// Semi-circle cluster used when two route pins snap together.
+    /// Radius so pin tips stay clearly separated along a semi-circle (~π·r arc).
+    public static func semiCircleRadius(forCount count: Int) -> Double {
+        let n = max(count, 1)
+        // ~0.085 board units between neighboring tips along the arc.
+        let spacing = 0.085
+        return max(0.1, Double(n - 1) * spacing / .pi + 0.04)
+    }
+
+    /// Semi-circle cluster for a drag-merge. Radius is based on count so sequential
+    /// merges grow into a visible fan instead of stacking on a tiny arc.
     public static func dragMergedSemiCircle(
         count: Int,
         around center: PlanPoint,
-        existing: [PlanPoint]
+        existing: [PlanPoint] = []
     ) -> [PlanPoint] {
         guard count > 0 else { return [] }
-        let radius: Double
-        if existing.count >= 2 {
-            let mean = existing.map { distance($0, center) }.reduce(0, +) / Double(existing.count)
-            radius = max(0.04, mean)
-        } else {
-            radius = max(0.048, 0.032 + Double(count) * 0.014)
-        }
-        return semiCircleSlots(count: count, center: center, radius: radius)
+        _ = existing // call sites may pass current pins; spacing is count-driven.
+        let radius = semiCircleRadius(forCount: count)
+        // Full upper semi-circle (π → 2π): left, up, right.
+        return semiCircleSlots(
+            count: count,
+            center: center,
+            radius: radius,
+            startAngle: .pi,
+            sweep: .pi
+        )
     }
 
     /// Lay out `count` points in a circle using existing pins for center/radius when possible.

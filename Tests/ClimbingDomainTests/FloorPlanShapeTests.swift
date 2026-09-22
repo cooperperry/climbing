@@ -223,29 +223,36 @@ final class FloorPlanShapeTests: XCTestCase {
         let center = PlanPoint(x: 0.5, y: 0.5)
         let slots = FloorPlanMath.semiCircleSlots(count: 3, center: center, radius: 0.1)
         XCTAssertEqual(slots.count, 3)
-        // Ends fan left/right; middle sits above the center.
         XCTAssertLessThan(slots[0].x, center.x)
         XCTAssertGreaterThan(slots[2].x, center.x)
         XCTAssertLessThan(slots[1].y, center.y)
         for slot in slots {
-            XCTAssertLessThan(slot.y, center.y + 1e-6)
+            XCTAssertLessThanOrEqual(slot.y, center.y + 1e-6)
         }
     }
 
-    func testDragMergedCircleGrowsWithCount() {
+    func testDragMergedSemiCircleGrowsVisiblyWithCount() {
         let center = PlanPoint(x: 0.5, y: 0.5)
-        let two = FloorPlanMath.dragMergedSemiCircle(count: 2, around: center, existing: [])
-        let five = FloorPlanMath.dragMergedSemiCircle(count: 5, around: center, existing: [])
+        let two = FloorPlanMath.dragMergedSemiCircle(count: 2, around: center)
+        let four = FloorPlanMath.dragMergedSemiCircle(count: 4, around: center)
         XCTAssertEqual(two.count, 2)
-        XCTAssertEqual(five.count, 5)
-        XCTAssertLessThan(two[0].x, center.x)
-        XCTAssertGreaterThan(two[1].x, center.x)
-        XCTAssertLessThan(two[0].y, center.y)
-        XCTAssertLessThan(two[1].y, center.y)
-        XCTAssertLessThan(five[2].y, center.y)
+        XCTAssertEqual(four.count, 4)
         let r2 = FloorPlanMath.distance(two[0], center)
-        let r5 = FloorPlanMath.distance(five[0], center)
-        XCTAssertGreaterThan(r5, r2)
+        let r4 = FloorPlanMath.distance(four[0], center)
+        XCTAssertGreaterThan(r4, r2)
+        // Four tips must not collapse into a stack — chord between ends is large.
+        let endSpan = FloorPlanMath.distance(four[0], four[3])
+        XCTAssertGreaterThan(endSpan, 0.15)
+        // Interior pins sit above the center on the upper arc.
+        XCTAssertLessThan(four[1].y, center.y)
+        XCTAssertLessThan(four[2].y, center.y)
+    }
+
+    func testSemiCircleRadiusKeepsPinsApart() {
+        let r2 = FloorPlanMath.semiCircleRadius(forCount: 2)
+        let r4 = FloorPlanMath.semiCircleRadius(forCount: 4)
+        XCTAssertGreaterThanOrEqual(r2, 0.1)
+        XCTAssertGreaterThan(r4, r2)
     }
 
     func testCircleSlotsFillRing() {

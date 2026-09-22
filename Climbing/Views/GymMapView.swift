@@ -139,7 +139,7 @@ struct GymMapView: View {
             }
         }
         if selectedWall != nil {
-            return "Tap Routes to set climbs. Drag one pin onto another to merge those two."
+            return "Tap Routes to set climbs. Drag a pin onto another to grow a semi-circle cluster."
         }
         return "Pinch to zoom, drag to pan. Tap a wall to select it."
     }
@@ -897,33 +897,42 @@ struct GymMapView: View {
         return best?.0
     }
 
-    /// Drag one pin onto another → only those two snap into a semi-circle fan.
+    /// Drag one pin onto another → join that cluster (target’s group + dragged’s group only)
+    /// and bounce everyone into a visible semi-circle. Does not pull in unrelated wall routes.
     private func snapMergeRoutes(dragged: GymRoute, onto target: GymRoute) {
         guard dragged.id != target.id else { return }
         let host = target.wall ?? dragged.wall
-        let key = UUID().uuidString
+        let key = target.groupKey ?? dragged.groupKey ?? UUID().uuidString
 
-        dragged.wall = host
-        target.wall = host
-        dragged.groupKey = key
-        target.groupKey = key
+        var cluster: [GymRoute] = [dragged, target]
+        if let g = target.groupKey {
+            cluster += allFloorRoutes().filter { $0.groupKey == g }
+        }
+        if let g = dragged.groupKey {
+            cluster += allFloorRoutes().filter { $0.groupKey == g }
+        }
+        var seen = Set<UUID>()
+        cluster = cluster.filter { seen.insert($0.id).inserted }
 
-        let pair = [dragged, target].sorted { $0.createdAt < $1.createdAt }
+        for route in cluster {
+            route.wall = host
+            route.groupKey = key
+        }
+
+        let sorted = cluster.sorted { $0.createdAt < $1.createdAt }
         let center = PlanPoint(
             x: (dragged.x + target.x) / 2,
             y: (dragged.y + target.y) / 2
         )
-        let existing = pair.map { PlanPoint(x: $0.x, y: $0.y) }
         let slots = FloorPlanMath.dragMergedSemiCircle(
-            count: pair.count,
-            around: center,
-            existing: existing
+            count: sorted.count,
+            around: center
         )
         if let host {
             selectedWall = host
             if routesWall != nil { routesWall = host }
         }
-        animateRouteLayout(pair, to: slots)
+        animateRouteLayout(sorted, to: slots)
     }
 
     private func addSegmentDrag(wall: GymArea, in size: CGSize, fromStart: Bool) -> some Gesture {
@@ -1476,7 +1485,7 @@ struct GymMapView: View {
                     ClimberIdentity.name = value
                 }
 
-            Text("Drag one pin onto another to merge just those two into a semi-circle.")
+            Text("Drag a pin onto another to join its cluster — they bounce into a semi-circle. Unrelated pins stay put.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
