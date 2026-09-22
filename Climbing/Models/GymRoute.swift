@@ -15,6 +15,8 @@ final class GymRoute {
     /// Display name of the climber who last set this route. Optional so older pins migrate.
     var updatedBy: String?
     var updatedAt: Date?
+    /// Shared key for routes spaced together (e.g. a circle cluster). Nil = ungrouped.
+    var groupKey: String?
     var wall: GymArea?
 
     var holdColor: HoldColor { HoldColor(rawValue: colorName) ?? .blue }
@@ -31,7 +33,8 @@ final class GymRoute {
         wall: GymArea? = nil,
         createdAt: Date = .now,
         updatedBy: String? = nil,
-        updatedAt: Date? = nil
+        updatedAt: Date? = nil,
+        groupKey: String? = nil
     ) {
         self.id = id
         self.grade = grade
@@ -44,5 +47,12 @@ final class GymRoute {
         self.createdAt = createdAt
         self.updatedBy = updatedBy
         self.updatedAt = updatedAt ?? createdAt
+        self.groupKey = groupKey
+    }
+
+    func setPin(x: Double, y: Double) {
+        let clamped = GymJoinMath.clampPin(x: x, y: y)
+        self.x = clamped.x
+        self.y = clamped.y
     }
 }

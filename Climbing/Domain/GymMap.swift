@@ -442,6 +442,89 @@ public enum FloorPlanMath {
         }
     }
 
+    /// Evenly space markers on a circle (grouped routes that fill a ring as count grows).
+    public static func circleSlots(
+        count: Int,
+        center: PlanPoint,
+        radius: Double,
+        startAngle: Double = -.pi / 2
+    ) -> [PlanPoint] {
+        guard count > 0 else { return [] }
+        if count == 1 {
+            return [PlanPoint(x: center.x, y: max(0, min(1, center.y - radius)))]
+        }
+        let r = max(radius, 0.02)
+        return (0 ..< count).map { index in
+            let angle = startAngle + (Double.pi * 2) * Double(index) / Double(count)
+            return PlanPoint(
+                x: center.x + cos(angle) * r,
+                y: center.y + sin(angle) * r
+            )
+        }
+    }
+
+    /// Lay out `count` points in a circle using existing pins for center/radius when possible.
+    public static func circleLayout(
+        existing: [PlanPoint],
+        count: Int,
+        fallbackCenter: PlanPoint,
+        fallbackRadius: Double = 0.08
+    ) -> [PlanPoint] {
+        guard count > 0 else { return [] }
+        let center: PlanPoint
+        let radius: Double
+        if existing.isEmpty == false {
+            center = centroid(of: existing)
+            let mean = existing.map { distance($0, center) }.reduce(0, +) / Double(existing.count)
+            radius = max(fallbackRadius, mean)
+        } else {
+            center = fallbackCenter
+            radius = fallbackRadius
+        }
+        return circleSlots(count: count, center: center, radius: radius)
+    }
+
+    /// Distance under which open endpoints snap / link / close.
+    public static let joinSnapDistance: Double = 0.045
+
+    /// True when an open polyline's ends are close enough to become a closed shape.
+    public static func shouldCloseOpenShape(points: [PlanPoint]) -> Bool {
+        guard points.count >= 3, let first = points.first, let last = points.last else { return false }
+        return distance(first, last) < joinSnapDistance
+    }
+
+    /// Merge two open polylines when any pair of endpoints is within `threshold`.
+    /// Returns nil when they do not touch.
+    public static func joinOpenPolylines(
+        _ a: [PlanPoint],
+        _ b: [PlanPoint],
+        threshold: Double = joinSnapDistance
+    ) -> [PlanPoint]? {
+        guard a.count >= 2, b.count >= 2,
+              let aStart = a.first, let aEnd = a.last,
+              let bStart = b.first, let bEnd = b.last else { return nil }
+
+        if distance(aEnd, bStart) < threshold {
+            return a + Array(b.dropFirst())
+        }
+        if distance(aEnd, bEnd) < threshold {
+            return a + Array(b.reversed().dropFirst())
+        }
+        if distance(aStart, bEnd) < threshold {
+            return b + Array(a.dropFirst())
+        }
+        if distance(aStart, bStart) < threshold {
+            return b.reversed() + Array(a.dropFirst())
+        }
+        return nil
+    }
+
+    /// Endpoints of an open shape, for link / snap chrome.
+    public static func openEndpoints(_ points: [PlanPoint]) -> [PlanPoint] {
+        guard points.count >= 2, let first = points.first, let last = points.last else { return [] }
+        return [first, last]
+    }
+
     // MARK: - Snap / grid (big-gym editing)
 
     public static let gridStep: Double = 0.05

@@ -43,10 +43,9 @@ struct GymMapView: View {
     private var gyms: [ClimbGym]
 
     @State private var drawTool: BuildTool?
-    @State private var editEdges = false
     @State private var snapGrid = false
     @State private var snapAngle = false
-    @State private var snapVertices = false
+    @State private var snapVertices = true
 
     @State private var zoomScale: CGFloat = 1.0
     @State private var panOffset: CGSize = .zero
@@ -66,6 +65,7 @@ struct GymMapView: View {
     @State private var logGrade: String?
     @State private var draftColor: HoldColor = .blue
     @State private var extendingWallID: UUID?
+    @State private var draggingRouteID: UUID?
     @State private var dragEditsShape = false
     @State private var isEditingName = false
     @State private var wallPendingDelete: GymArea?
@@ -119,27 +119,21 @@ struct GymMapView: View {
     private var drawMode: BuildTool? { drawTool }
 
     private var hint: String {
-        if editEdges, selectedWall != nil {
-            return "Trash on an edge deletes that segment. Tap Done editing when finished."
-        }
         if let tool = drawTool {
             switch tool {
             case .line:
-                return "Drag to draw a wall."
+                return "Drag to draw a wall. Drag ends near each other or another wall to link."
             case .square:
                 return "Drag to size a room."
             case .polygon:
                 if polygonDraft.isEmpty {
-                    return "Drag each side of your polygon."
+                    return "Drag each side — keep going to build a full shape."
                 }
                 return "Drag the next side — near the start closes it, or tap Done."
             }
         }
-        if let wall = selectedWall {
-            if wall.shapeClosed == false {
-                return "Drag the + to extend, drag the wall to move it, or tap Routes."
-            }
-            return "Drag the wall to move it, or tap Routes to update climbs."
+        if selectedWall != nil {
+            return "Drag corners or + to reshape. Drag grade tags to place routes. Ends snap to link or close."
         }
         return "Pinch to zoom, drag to pan. Tap a wall to select it."
     }
@@ -162,16 +156,6 @@ struct GymMapView: View {
             .allowsHitTesting(false)
 
             VStack(spacing: 10) {
-                if editEdges {
-                    Button("Done editing") {
-                        editEdges = false
-                        applyRename(to: selectedWall)
-                        persistMap()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.stravaOrange)
-                }
-
                 if drawTool == .polygon, polygonDraft.count >= 2 {
                     HStack {
                         Button("Done") { finishPolygon(closed: polygonDraft.count >= 3) }
@@ -218,7 +202,6 @@ struct GymMapView: View {
             extendingWallID = nil
             dragEditsShape = false
             if newTool != .polygon { polygonDraft = [] }
-            if newTool != nil { editEdges = false }
         }
         .onAppear {
             prepareGrades()
@@ -296,21 +279,19 @@ struct GymMapView: View {
             Button {
                 drawTool = .line
             } label: {
-                Label(BuildTool.line.title, systemImage: BuildTool.line.systemImage)
-            }
-            Button {
-                drawTool = .square
-            } label: {
-                Label(BuildTool.square.title, systemImage: BuildTool.square.systemImage)
+                Label("Wall line", systemImage: BuildTool.line.systemImage)
             }
             Button {
                 drawTool = .polygon
             } label: {
-                Label(BuildTool.polygon.title, systemImage: BuildTool.polygon.systemImage)
+                Label("Keep drawing", systemImage: BuildTool.polygon.systemImage)
+            }
+            Button {
+                drawTool = .square
+            } label: {
+                Label("Room", systemImage: BuildTool.square.systemImage)
             }
             Divider()
-            Button("360 A–F ring") { insertTemplateRing360() }
-            Button("Cave box") { insertTemplateCaveBox() }
             Button("Duplicate selected") { duplicateSelectedWall() }
                 .disabled(selectedWall == nil)
         } label: {
@@ -381,22 +362,14 @@ struct GymMapView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.stravaOrange)
 
-                if editEdges {
-                    if wall.shapeClosed == false {
-                        if wall.floorPlanPoints().count >= 3 {
-                            Button("Close") { closeShape(wall) }
-                                .font(.caption.bold())
-                        }
-                        Button("Break") { breakSelectedWall() }
+                if wall.shapeClosed == false {
+                    if wall.floorPlanPoints().count >= 3 {
+                        Button("Close shape") { closeShape(wall) }
                             .font(.caption.bold())
-                            .disabled(wall.floorPlanPoints().count < 2)
                     }
-                } else {
-                    Button("Edit shape") {
-                        drawTool = nil
-                        editEdges = true
-                    }
-                    .buttonStyle(.bordered)
+                    Button("Break") { breakSelectedWall() }
+                        .font(.caption.bold())
+                        .disabled(wall.floorPlanPoints().count < 2)
                 }
 
                 Spacer(minLength: 0)
@@ -597,7 +570,7 @@ struct GymMapView: View {
                     nameTag(wall, in: size)
                 }
 
-                if let wall = selectedWall, editEdges || wall.shapeClosed == false {
+                if let wall = selectedWall {
                     editHandles(for: wall, in: size)
                 }
             }
@@ -718,10 +691,8 @@ struct GymMapView: View {
 
     private func routeMarkers(for wall: GymArea, in size: CGSize) -> some View {
         let routes = wall.routes.sorted { $0.createdAt < $1.createdAt }
-        let points = wall.floorPlanPoints()
-        let slots = FloorPlanMath.routeSlots(count: routes.count, on: points, closed: wall.shapeClosed)
-        return ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
-            let pos = index < slots.count ? slots[index] : PlanPoint(x: route.x, y: route.y)
+        return ForEach(routes) { route in
+            let pos = PlanPoint(x: route.x, y: route.y)
             Text(route.grade)
                 .font(.caption2.bold())
                 .foregroundStyle(route.holdColor.prefersDarkLabel ? Color.black : Color.white)
@@ -729,11 +700,14 @@ struct GymMapView: View {
                 .padding(.vertical, 4)
                 .background(Color(hold: route.holdColor), in: Capsule())
                 .overlay {
-                    Capsule().strokeBorder(Color.white.opacity(0.85), lineWidth: 1)
+                    Capsule().strokeBorder(
+                        draggingRouteID == route.id ? Color.stravaOrange : Color.white.opacity(0.85),
+                        lineWidth: draggingRouteID == route.id ? 2 : 1
+                    )
                 }
                 .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
                 .position(pixel(pos, in: size))
-                .allowsHitTesting(false)
+                .highPriorityGesture(routeDrag(route, in: size))
         }
     }
 
@@ -744,32 +718,30 @@ struct GymMapView: View {
         let vertexSize: CGFloat = isOpenLine && points.count <= 3 ? 28 : 22
         let segmentCount = FloorPlanMath.segmentCount(points: points, closed: wall.shapeClosed)
 
-        if editEdges {
-            ForEach(Array(points.enumerated()), id: \.offset) { index, pt in
-                Circle()
-                    .fill(Color.stravaOrange)
-                    .frame(width: vertexSize, height: vertexSize)
-                    .overlay { Circle().strokeBorder(Color.white, lineWidth: 2) }
-                    .contentShape(Circle().scale(1.4))
-                    .position(pixel(pt, in: size))
-                    .highPriorityGesture(vertexDrag(wall: wall, index: index, in: size))
-            }
+        ForEach(Array(points.enumerated()), id: \.offset) { index, pt in
+            Circle()
+                .fill(Color.stravaOrange)
+                .frame(width: vertexSize, height: vertexSize)
+                .overlay { Circle().strokeBorder(Color.white, lineWidth: 2) }
+                .contentShape(Circle().scale(1.4))
+                .position(pixel(pt, in: size))
+                .highPriorityGesture(vertexDrag(wall: wall, index: index, in: size))
+        }
 
-            ForEach(0 ..< segmentCount, id: \.self) { index in
-                if let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: index) {
-                    Button {
-                        deleteSegment(at: index, on: wall)
-                    } label: {
-                        Image(systemName: "trash.fill")
-                            .font(.caption.bold())
-                            .foregroundStyle(.white)
-                            .frame(width: 28, height: 28)
-                            .background(Color.red.opacity(0.92), in: Circle())
-                            .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
-                    }
-                    .buttonStyle(.plain)
-                    .position(pixel(mid, in: size))
+        ForEach(0 ..< segmentCount, id: \.self) { index in
+            if let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: index) {
+                Button {
+                    deleteSegment(at: index, on: wall)
+                } label: {
+                    Image(systemName: "trash.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(Color.red.opacity(0.92), in: Circle())
+                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
                 }
+                .buttonStyle(.plain)
+                .position(pixel(mid, in: size))
             }
         }
 
@@ -825,7 +797,10 @@ struct GymMapView: View {
                 pts[index] = applySnaps(to: raw, origin: origin, excluding: wall)
                 wall.setFloorPlanPoints(pts)
             }
-            .onEnded { _ in persistMap() }
+            .onEnded { _ in
+                tryLinkOrClose(wall)
+                persistMap()
+            }
     }
 
     private func vertexSnapOrigin(points: [PlanPoint], index: Int) -> PlanPoint? {
@@ -833,6 +808,20 @@ struct GymMapView: View {
         if index > 0 { return points[index - 1] }
         if points.count > 1 { return points[1] }
         return nil
+    }
+
+    private func routeDrag(_ route: GymRoute, in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                draggingRouteID = route.id
+                let board = canvasSize == .zero ? size : canvasSize
+                let point = normalized(value.location, in: board)
+                route.setPin(x: point.x, y: point.y)
+            }
+            .onEnded { _ in
+                draggingRouteID = nil
+                persistMap()
+            }
     }
 
     private func addSegmentDrag(wall: GymArea, in size: CGSize, fromStart: Bool) -> some Gesture {
@@ -864,6 +853,7 @@ struct GymMapView: View {
             }
             .onEnded { _ in
                 extendingWallID = nil
+                tryLinkOrClose(wall)
                 persistMap()
             }
     }
@@ -871,9 +861,12 @@ struct GymMapView: View {
     private func canvasGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                if draggingRouteID != nil { return }
+
                 if drawTool == nil {
                     let start = normalized(value.startLocation, in: size)
                     if shapeDragOrigin == nil && rubberBand == nil && dragEditsShape == false {
+                        if nearAnyRoute(start) { return }
                         if hitTest(start) == nil {
                             panOffset = CGSize(
                                 width: panAnchor.width + value.translation.width,
@@ -886,6 +879,7 @@ struct GymMapView: View {
 
                 let point = snappedBoardPoint(from: value.location, in: size, strokeOrigin: rubberBand?.start ?? polygonDraft.last)
                 let start = normalized(value.startLocation, in: size)
+                if nearAnyRoute(start) { return }
 
                 if shapeDragOrigin == nil && rubberBand == nil && dragEditsShape == false {
                     if let hit = hitTest(start) {
@@ -1068,7 +1062,7 @@ struct GymMapView: View {
     }
 
     private func handleSelectTap(at point: PlanPoint) {
-        if editEdges, let wall = selectedWall {
+        if let wall = selectedWall {
             let pts = wall.floorPlanPoints()
             if let next = FloorPlanMath.insertingVertex(in: pts, closed: wall.shapeClosed, at: point) {
                 wall.setFloorPlanPoints(next)
@@ -1167,6 +1161,38 @@ struct GymMapView: View {
         persistMap()
     }
 
+    /// Snap open ends together into a closed loop, or merge into a neighboring open wall.
+    private func tryLinkOrClose(_ wall: GymArea) {
+        guard wall.shapeClosed == false else { return }
+        var points = wall.floorPlanPoints()
+        guard points.count >= 2 else { return }
+
+        if FloorPlanMath.shouldCloseOpenShape(points: points) {
+            wall.shapeClosed = true
+            return
+        }
+
+        for other in wallsOnFloor where other.id != wall.id && other.shapeClosed == false {
+            let otherPoints = other.floorPlanPoints()
+            guard let joined = FloorPlanMath.joinOpenPolylines(points, otherPoints) else { continue }
+            wall.setFloorPlanPoints(joined)
+            for route in other.routes {
+                route.wall = wall
+            }
+            if selectedWall?.id == other.id {
+                selectedWall = wall
+            }
+            if routesWall?.id == other.id {
+                routesWall = wall
+            }
+            context.delete(other)
+            if FloorPlanMath.shouldCloseOpenShape(points: joined) {
+                wall.shapeClosed = true
+            }
+            return
+        }
+    }
+
     private func breakSelectedWall() {
         guard let wall = selectedWall, wall.shapeClosed == false else { return }
         let points = wall.floorPlanPoints()
@@ -1217,9 +1243,20 @@ struct GymMapView: View {
     }
 
     private func nearShapeChrome(of wall: GymArea, point: PlanPoint) -> Bool {
-        if nearAddHandle(of: wall, point: point) { return true }
-        guard editEdges else { return false }
-        return nearVertex(of: wall, point: point) || nearTrash(of: wall, point: point)
+        nearAddHandle(of: wall, point: point)
+            || nearVertex(of: wall, point: point)
+            || nearTrash(of: wall, point: point)
+    }
+
+    private func nearAnyRoute(_ point: PlanPoint) -> Bool {
+        for wall in wallsOnFloor {
+            for route in wall.routes {
+                if FloorPlanMath.distance(PlanPoint(x: route.x, y: route.y), point) < 0.05 {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     private func nearVertex(of wall: GymArea, point: PlanPoint) -> Bool {
@@ -1270,41 +1307,13 @@ struct GymMapView: View {
         CGPoint(x: point.x * max(size.width, 1), y: point.y * max(size.height, 1))
     }
 
-    // MARK: - Templates & floors
+    // MARK: - Floors
 
     private func addFloor() {
         let name = FloorPlanMath.optionalWallName(newFloorDraft)
         guard name.isEmpty == false else { return }
         gym.currentFloorName = name
         newFloorDraft = ""
-        persistMap()
-    }
-
-    private func insertTemplateRing360() {
-        let specs = FloorPlanTemplates.ring360()
-        insertTemplateSpecs(specs)
-    }
-
-    private func insertTemplateCaveBox() {
-        insertTemplateSpecs([FloorPlanTemplates.caveBox()])
-    }
-
-    private func insertTemplateSpecs(_ specs: [FloorPlanTemplates.WallSpec]) {
-        for spec in specs {
-            let center = FloorPlanMath.centroid(of: spec.points)
-            let area = GymArea(
-                name: spec.name,
-                x: center.x,
-                y: center.y,
-                gym: gym,
-                shapePointsData: FloorPlanMath.encode(spec.points),
-                shapeClosed: spec.closed,
-                zoneName: spec.zone == "General" ? "" : spec.zone,
-                floorName: activeFloorStorage
-            )
-            context.insert(area)
-        }
-        for item in gyms { item.isCurrent = (item.id == gym.id) }
         persistMap()
     }
 
@@ -1353,12 +1362,18 @@ struct GymMapView: View {
 
     private func routeList(for area: GymArea) -> some View {
         let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
+        let circleKey = area.id.uuidString
+        let groupedCount = routes.filter { $0.groupKey == circleKey }.count
         return VStack(alignment: .leading, spacing: 12) {
             TextField("Your name on updates", text: $climberName)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: climberName) { _, value in
                     ClimberIdentity.name = value
                 }
+
+            Text("Drag grade tags on the map to place them. Group routes to space them in a circle.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             if routes.isEmpty {
                 Text("No routes on this wall yet.")
@@ -1378,9 +1393,24 @@ struct GymMapView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        Button {
+                            toggleCircleGroup(route, on: area)
+                        } label: {
+                            Image(systemName: route.groupKey == circleKey ? "circle.grid.cross.fill" : "circle.dashed")
+                                .foregroundStyle(route.groupKey == circleKey ? Color.stravaOrange : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(route.groupKey == circleKey ? "Remove from circle" : "Add to circle")
                         Button("Remove", role: .destructive) { removeRoute(route) }
                             .font(.caption.bold())
                     }
+                }
+
+                if groupedCount > 0 {
+                    Button("Space \(groupedCount) in a circle") {
+                        arrangeCircleGroup(on: area)
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
 
@@ -1440,9 +1470,33 @@ struct GymMapView: View {
         guard let grade = logGrade, GymJoinMath.isUsableName(name) else { return }
         ClimberIdentity.name = name
         let points = area.floorPlanPoints()
-        let nextCount = area.routes.count + 1
-        let slots = FloorPlanMath.routeSlots(count: nextCount, on: points, closed: area.shapeClosed)
-        let pin = slots.last ?? FloorPlanMath.centroid(of: points)
+        let circleKey = area.id.uuidString
+        let grouped = area.routes.filter { $0.groupKey == circleKey }.sorted { $0.createdAt < $1.createdAt }
+        let pin: PlanPoint
+        let groupKey: String?
+        if grouped.isEmpty == false {
+            groupKey = circleKey
+            let existing = grouped.map { PlanPoint(x: $0.x, y: $0.y) }
+            let slots = FloorPlanMath.circleLayout(
+                existing: existing,
+                count: grouped.count + 1,
+                fallbackCenter: FloorPlanMath.centroid(of: points)
+            )
+            for (index, route) in grouped.enumerated() where index < slots.count {
+                route.setPin(x: slots[index].x, y: slots[index].y)
+            }
+            pin = slots.last ?? FloorPlanMath.centroid(of: points)
+        } else if area.shapeClosed {
+            groupKey = nil
+            let nextCount = area.routes.count + 1
+            let slots = FloorPlanMath.routeSlots(count: nextCount, on: points, closed: true)
+            pin = slots.last ?? FloorPlanMath.centroid(of: points)
+        } else {
+            groupKey = nil
+            let nextCount = area.routes.count + 1
+            let slots = FloorPlanMath.routeSlots(count: nextCount, on: points, closed: false)
+            pin = slots.last ?? FloorPlanMath.centroid(of: points)
+        }
         let route = GymRoute(
             grade: grade,
             colorName: draftColor.rawValue,
@@ -1451,9 +1505,39 @@ struct GymMapView: View {
             discipline: logDiscipline,
             wall: area,
             updatedBy: name,
-            updatedAt: .now
+            updatedAt: .now,
+            groupKey: groupKey
         )
         context.insert(route)
+        persistMap()
+    }
+
+    private func toggleCircleGroup(_ route: GymRoute, on area: GymArea) {
+        let key = area.id.uuidString
+        if route.groupKey == key {
+            route.groupKey = nil
+        } else {
+            route.groupKey = key
+            arrangeCircleGroup(on: area)
+            return
+        }
+        persistMap()
+    }
+
+    private func arrangeCircleGroup(on area: GymArea) {
+        let key = area.id.uuidString
+        let grouped = area.routes.filter { $0.groupKey == key }.sorted { $0.createdAt < $1.createdAt }
+        guard grouped.isEmpty == false else { return }
+        let existing = grouped.map { PlanPoint(x: $0.x, y: $0.y) }
+        let center = FloorPlanMath.centroid(of: area.floorPlanPoints())
+        let slots = FloorPlanMath.circleLayout(
+            existing: existing,
+            count: grouped.count,
+            fallbackCenter: center
+        )
+        for (index, route) in grouped.enumerated() where index < slots.count {
+            route.setPin(x: slots[index].x, y: slots[index].y)
+        }
         persistMap()
     }
 

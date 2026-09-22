@@ -178,6 +178,47 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(slots[2].x, 1.0, accuracy: 1e-6)
     }
 
+    func testCircleSlotsFillRing() {
+        let center = PlanPoint(x: 0.5, y: 0.5)
+        let slots = FloorPlanMath.circleSlots(count: 4, center: center, radius: 0.1)
+        XCTAssertEqual(slots.count, 4)
+        for slot in slots {
+            XCTAssertEqual(FloorPlanMath.distance(slot, center), 0.1, accuracy: 1e-6)
+        }
+        // Even spacing: opposite points are diameter apart.
+        XCTAssertEqual(FloorPlanMath.distance(slots[0], slots[2]), 0.2, accuracy: 1e-6)
+    }
+
+    func testJoinOpenPolylinesAtTouchingEnds() throws {
+        let a = [
+            PlanPoint(x: 0.1, y: 0.5),
+            PlanPoint(x: 0.4, y: 0.5),
+        ]
+        let b = [
+            PlanPoint(x: 0.41, y: 0.5),
+            PlanPoint(x: 0.8, y: 0.5),
+        ]
+        let joined = try XCTUnwrap(FloorPlanMath.joinOpenPolylines(a, b, threshold: 0.05))
+        XCTAssertEqual(joined.count, 3)
+        XCTAssertEqual(joined[0].x, 0.1, accuracy: 1e-6)
+        XCTAssertEqual(joined[joined.count - 1].x, 0.8, accuracy: 1e-6)
+    }
+
+    func testShouldCloseOpenShapeWhenEndsMeet() {
+        let almost = [
+            PlanPoint(x: 0.3, y: 0.3),
+            PlanPoint(x: 0.7, y: 0.3),
+            PlanPoint(x: 0.7, y: 0.7),
+            PlanPoint(x: 0.31, y: 0.31),
+        ]
+        XCTAssertTrue(FloorPlanMath.shouldCloseOpenShape(points: almost))
+        XCTAssertFalse(FloorPlanMath.shouldCloseOpenShape(points: [
+            PlanPoint(x: 0.2, y: 0.2),
+            PlanPoint(x: 0.8, y: 0.2),
+            PlanPoint(x: 0.8, y: 0.8),
+        ]))
+    }
+
     func testChromeAnchorSitsAboveCentroid() {
         let points = [
             PlanPoint(x: 0.4, y: 0.5),
