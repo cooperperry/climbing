@@ -2,7 +2,6 @@ import SwiftUI
 import SwiftData
 
 private enum MapMode: String, CaseIterable, Identifiable {
-    case select
     case line
     case square
     case polygon
@@ -11,7 +10,6 @@ private enum MapMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .select: "Select"
         case .line: "Line"
         case .square: "Square"
         case .polygon: "Polygon"
@@ -20,7 +18,6 @@ private enum MapMode: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .select: "hand.tap"
         case .line: "line.diagonal"
         case .square: "square"
         case .polygon: "pentagon"
@@ -43,7 +40,7 @@ struct GymMapView: View {
     @Query(sort: \ClimbGym.joinedAt)
     private var gyms: [ClimbGym]
 
-    @State private var mode: MapMode = .select
+    @State private var mode: MapMode = .line
     @State private var selectedWall: GymArea?
     @State private var routesWall: GymArea?
     @State private var renameDraft = ""
@@ -56,6 +53,9 @@ struct GymMapView: View {
     @State private var logGrade: String?
     @State private var draftColor: HoldColor = .blue
     @State private var extendingWallID: UUID?
+    /// When a drag starts on an existing wall, we edit it instead of drawing.
+    @State private var dragEditsShape = false
+    @State private var isEditingName = false
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -71,19 +71,17 @@ struct GymMapView: View {
     }
 
     private var hint: String {
+        if selectedWall != nil {
+            return "Drag corners or the + to reshape. Empty space draws a new \(mode.title.lowercased())."
+        }
         switch mode {
-        case .select:
-            if selectedWall != nil {
-                return "Drag corners to reshape. Drag + to add a segment. Name is optional below."
-            }
-            return "Tap a shape to edit it."
         case .line:
-            return "Drag across the board to draw a wall."
+            return "Drag to draw a wall — or tap any shape to edit it."
         case .square:
-            return "Drag to size a room or cave."
+            return "Drag to size a room — or tap any shape to edit it."
         case .polygon:
             if polygonDraft.isEmpty {
-                return "Drag the first side, then keep dragging sides."
+                return "Drag sides for a polygon — or tap a shape to edit it."
             }
             return "Drag the next side. Near the start closes it — or tap Done."
         }
@@ -109,11 +107,12 @@ struct GymMapView: View {
                 .onChange(of: mode) { _, newMode in
                     rubberBand = nil
                     extendingWallID = nil
+                    dragEditsShape = false
                     if newMode != .polygon { polygonDraft = [] }
-                    if newMode != .select { selectedWall = nil }
                 }
                 .onChange(of: selectedWall?.id) { _, _ in
                     renameDraft = selectedWall?.name ?? ""
+                    isEditingName = false
                 }
 
                 if mode == .polygon, polygonDraft.count >= 2 {
@@ -128,7 +127,7 @@ struct GymMapView: View {
                     }
                 }
 
-                if let wall = selectedWall, mode == .select {
+                if let wall = selectedWall {
                     selectedWallBar(wall)
                 }
             }
@@ -165,17 +164,6 @@ struct GymMapView: View {
     @ViewBuilder
     private func selectedWallBar(_ wall: GymArea) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Name (optional)", text: $renameDraft)
-                .textFieldStyle(.roundedBorder)
-                .submitLabel(.done)
-                .onSubmit { applyRename(to: wall) }
-                .onChange(of: renameDraft) { _, value in
-                    wall.name = FloorPlanMath.optionalWallName(value)
-                    if gym.currentWallName != nil || wall.name.isEmpty == false {
-                        gym.currentWallName = wall.name.isEmpty ? nil : wall.name
-                    }
-                }
-
             HStack(spacing: 8) {
                 if wall.shapeClosed == false {
                     if wall.floorPlanPoints().count >= 3 {
@@ -189,11 +177,54 @@ struct GymMapView: View {
                 Button("Routes") { openRoutes(for: wall) }
                     .font(.caption.bold())
                 Spacer(minLength: 4)
+                nameControl(for: wall)
                 Button("Delete", role: .destructive) { removeWall(wall) }
                     .font(.caption.bold())
             }
+
+            if isEditingName {
+                TextField("Cave, 360 A…", text: $renameDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.done)
+                    .onSubmit {
+                        applyRename(to: wall)
+                        persistMap()
+                        isEditingName = false
+                    }
+                    .onChange(of: renameDraft) { _, value in
+                        wall.name = FloorPlanMath.optionalWallName(value)
+                        gym.currentWallName = wall.name.isEmpty ? nil : wall.name
+                    }
+            }
         }
         .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private func nameControl(for wall: GymArea) -> some View {
+        let label = FloorPlanMath.optionalWallName(wall.name)
+        if isEditingName {
+            Button("Done") {
+                applyRename(to: wall)
+                persistMap()
+                isEditingName = false
+            }
+            .font(.caption.bold())
+        } else if label.isEmpty {
+            Button("Add name") {
+                renameDraft = ""
+                isEditingName = true
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else {
+            Button(label) {
+                renameDraft = label
+                isEditingName = true
+            }
+            .font(.caption.bold())
+            .lineLimit(1)
+        }
     }
 
     private var floorPlan: some View {
@@ -219,7 +250,7 @@ struct GymMapView: View {
                     nameTag(wall, in: size)
                 }
 
-                if mode == .select, let wall = selectedWall {
+                if let wall = selectedWall {
                     editHandles(for: wall, in: size)
                 }
             }
@@ -256,8 +287,6 @@ struct GymMapView: View {
                     path.addLine(to: pixel(band.current, in: size))
                 }
                 .stroke(Color.stravaOrange, style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [6, 4]))
-            case .select:
-                EmptyView()
             }
         }
 
@@ -303,8 +332,8 @@ struct GymMapView: View {
         let center = FloorPlanMath.centroid(of: wall.floorPlanPoints())
         let focused = selectedWall?.id == wall.id
         return Group {
-            if label.isEmpty == false || focused {
-                Text(label.isEmpty ? "Name…" : label)
+            if label.isEmpty == false {
+                Text(label)
                     .font(.caption2.bold())
                     .foregroundStyle(focused ? Color.black : Color.white)
                     .padding(.horizontal, 6)
@@ -383,16 +412,34 @@ struct GymMapView: View {
             .onChanged { value in
                 let point = normalized(value.location, in: size)
                 let start = normalized(value.startLocation, in: size)
-                switch mode {
-                case .line, .square:
-                    rubberBand = RubberBand(start: start, current: point)
-                case .polygon:
-                    let from = polygonDraft.last ?? start
-                    rubberBand = RubberBand(start: from, current: point)
-                case .select:
+
+                if shapeDragOrigin == nil && rubberBand == nil && dragEditsShape == false {
+                    // First sample of this gesture: edit if we hit a shape, else draw.
+                    if let hit = hitTest(start) {
+                        dragEditsShape = true
+                        if selectedWall?.id != hit.id {
+                            applyRename(to: selectedWall)
+                            selectedWall = hit
+                            renameDraft = hit.name
+                        }
+                        if nearVertex(of: hit, point: start) || nearAddHandle(of: hit, point: start) {
+                            return
+                        }
+                        shapeDragOrigin = hit.floorPlanPoints()
+                    } else if let selected = selectedWall,
+                              nearVertex(of: selected, point: start) || nearAddHandle(of: selected, point: start) {
+                        dragEditsShape = true
+                        return
+                    } else {
+                        dragEditsShape = false
+                    }
+                }
+
+                if dragEditsShape {
                     guard let wall = selectedWall else { return }
-                    if nearVertex(of: wall, point: start) { return }
-                    if nearAddHandle(of: wall, point: start) { return }
+                    if nearVertex(of: wall, point: start) || nearAddHandle(of: wall, point: start) {
+                        return
+                    }
                     if shapeDragOrigin == nil {
                         shapeDragOrigin = wall.floorPlanPoints()
                     }
@@ -402,37 +449,59 @@ struct GymMapView: View {
                         dx: point.x - start.x,
                         dy: point.y - start.y
                     ))
+                    return
+                }
+
+                switch mode {
+                case .line, .square:
+                    rubberBand = RubberBand(start: start, current: point)
+                case .polygon:
+                    let from = polygonDraft.last ?? start
+                    rubberBand = RubberBand(start: from, current: point)
                 }
             }
             .onEnded { value in
                 let moved = hypot(value.translation.width, value.translation.height) >= 12
                 let start = normalized(value.startLocation, in: size)
                 let end = normalized(value.location, in: size)
+                let wasEditing = dragEditsShape
                 defer {
                     shapeDragOrigin = nil
                     rubberBand = nil
+                    dragEditsShape = false
+                }
+
+                if wasEditing {
+                    if moved {
+                        applyRename(to: selectedWall)
+                        persistMap()
+                    } else {
+                        handleSelectTap(at: end)
+                    }
+                    return
                 }
 
                 switch mode {
                 case .line:
-                    guard moved, FloorPlanMath.isUsableStroke(from: start, to: end) else { return }
+                    guard moved, FloorPlanMath.isUsableStroke(from: start, to: end) else {
+                        if moved == false { handleSelectTap(at: end) }
+                        return
+                    }
                     createWall(points: [start, end], closed: false)
                 case .square:
-                    guard moved else { return }
+                    guard moved else {
+                        handleSelectTap(at: end)
+                        return
+                    }
                     let rect = FloorPlanMath.rectangle(from: start, to: end)
                     guard FloorPlanMath.isUsableRectangle(rect) else { return }
                     createWall(points: rect, closed: true)
                 case .polygon:
-                    commitPolygonDrag(start: start, end: end, moved: moved)
-                case .select:
-                    if moved {
-                        if selectedWall != nil {
-                            applyRename(to: selectedWall)
-                            persistMap()
-                        }
+                    if moved == false, polygonDraft.isEmpty {
+                        handleSelectTap(at: end)
                         return
                     }
-                    handleSelectTap(at: end)
+                    commitPolygonDrag(start: start, end: end, moved: moved)
                 }
             }
     }
@@ -484,6 +553,9 @@ struct GymMapView: View {
         )
         context.insert(area)
         for item in gyms { item.isCurrent = (item.id == gym.id) }
+        selectedWall = area
+        renameDraft = ""
+        isEditingName = false
         persistMap()
     }
 
