@@ -178,6 +178,26 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(slots[2].x, 1.0, accuracy: 1e-6)
     }
 
+    func testRouteSlotsOnClosedWallRingAroundLoop() {
+        let square = FloorPlanMath.square(center: PlanPoint(x: 0.5, y: 0.5), size: 0.2)
+        let slots = FloorPlanMath.routeSlots(count: 4, on: square, closed: true)
+        XCTAssertEqual(slots.count, 4)
+        // Four evenly spaced points on the perimeter — not stacked at corners only.
+        let xs = Set(slots.map { round($0.x * 1000) / 1000 })
+        XCTAssertGreaterThan(xs.count, 1)
+    }
+
+    func testLayoutRoutesClosedUsesRingOutsideWall() {
+        let square = FloorPlanMath.square(center: PlanPoint(x: 0.5, y: 0.5), size: 0.2)
+        let slots = FloorPlanMath.layoutRoutes(count: 6, on: square, closed: true)
+        XCTAssertEqual(slots.count, 6)
+        let center = FloorPlanMath.centroid(of: square)
+        let wallRadius = square.map { FloorPlanMath.distance($0, center) }.max() ?? 0
+        for slot in slots {
+            XCTAssertGreaterThan(FloorPlanMath.distance(slot, center), wallRadius)
+        }
+    }
+
     func testCircleSlotsFillRing() {
         let center = PlanPoint(x: 0.5, y: 0.5)
         let slots = FloorPlanMath.circleSlots(count: 4, center: center, radius: 0.1)

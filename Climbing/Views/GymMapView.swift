@@ -43,6 +43,7 @@ struct GymMapView: View {
     private var gyms: [ClimbGym]
 
     @State private var drawTool: BuildTool?
+    @State private var editingShape = false
     @State private var snapGrid = false
     @State private var snapAngle = false
     @State private var snapVertices = true
@@ -119,6 +120,9 @@ struct GymMapView: View {
     private var drawMode: BuildTool? { drawTool }
 
     private var hint: String {
+        if editingShape, selectedWall != nil {
+            return "Drag corners or + to reshape. Trash removes a segment. Ends snap to link or close."
+        }
         if let tool = drawTool {
             switch tool {
             case .line:
@@ -133,7 +137,7 @@ struct GymMapView: View {
             }
         }
         if selectedWall != nil {
-            return "Drag corners or + to reshape. Drag grade tags to place routes. Ends snap to link or close."
+            return "Tap Routes to set climbs, or Edit shape to extend and reshape."
         }
         return "Pinch to zoom, drag to pan. Tap a wall to select it."
     }
@@ -156,6 +160,16 @@ struct GymMapView: View {
             .allowsHitTesting(false)
 
             VStack(spacing: 10) {
+                if editingShape, routesWall == nil {
+                    Button("Done editing") {
+                        editingShape = false
+                        applyRename(to: selectedWall)
+                        persistMap()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.stravaOrange)
+                }
+
                 if drawTool == .polygon, polygonDraft.count >= 2 {
                     HStack {
                         Button("Done") { finishPolygon(closed: polygonDraft.count >= 3) }
@@ -170,7 +184,7 @@ struct GymMapView: View {
                     .padding(.horizontal)
                 }
 
-                if let wall = selectedWall {
+                if let wall = selectedWall, routesWall == nil {
                     selectedWallCard(wall)
                 }
             }
@@ -202,6 +216,7 @@ struct GymMapView: View {
             extendingWallID = nil
             dragEditsShape = false
             if newTool != .polygon { polygonDraft = [] }
+            if newTool != nil { editingShape = false }
         }
         .onAppear {
             prepareGrades()
@@ -217,6 +232,7 @@ struct GymMapView: View {
             renameDraft = selectedWall?.name ?? ""
             zoneDraft = selectedWall?.zoneName ?? ""
             isEditingName = false
+            editingShape = false
         }
         .onChange(of: photoPickerItem) { _, item in
             guard let item else { return }
@@ -362,14 +378,22 @@ struct GymMapView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.stravaOrange)
 
-                if wall.shapeClosed == false {
-                    if wall.floorPlanPoints().count >= 3 {
-                        Button("Close shape") { closeShape(wall) }
+                if editingShape {
+                    if wall.shapeClosed == false {
+                        if wall.floorPlanPoints().count >= 3 {
+                            Button("Close shape") { closeShape(wall) }
+                                .font(.caption.bold())
+                        }
+                        Button("Break") { breakSelectedWall() }
                             .font(.caption.bold())
+                            .disabled(wall.floorPlanPoints().count < 2)
                     }
-                    Button("Break") { breakSelectedWall() }
-                        .font(.caption.bold())
-                        .disabled(wall.floorPlanPoints().count < 2)
+                } else {
+                    Button("Edit shape") {
+                        drawTool = nil
+                        editingShape = true
+                    }
+                    .buttonStyle(.bordered)
                 }
 
                 Spacer(minLength: 0)
@@ -560,18 +584,19 @@ struct GymMapView: View {
                     shapeStroke(wall, in: size)
                 }
 
-                ForEach(wallsOnFloor) { wall in
-                    routeMarkers(for: wall, in: size)
-                }
-
                 draftOverlay(in: size)
 
                 ForEach(wallsOnFloor) { wall in
                     nameTag(wall, in: size)
                 }
 
-                if let wall = selectedWall {
+                if editingShape, routesWall == nil, let wall = selectedWall {
                     editHandles(for: wall, in: size)
+                }
+
+                // Routes sit above shape chrome so tags stay tappable.
+                ForEach(wallsOnFloor) { wall in
+                    routeMarkers(for: wall, in: size)
                 }
             }
             .frame(width: size.width, height: size.height)
@@ -1058,7 +1083,7 @@ struct GymMapView: View {
     }
 
     private func handleSelectTap(at point: PlanPoint) {
-        if let wall = selectedWall {
+        if editingShape, let wall = selectedWall {
             let pts = wall.floorPlanPoints()
             if let next = FloorPlanMath.insertingVertex(in: pts, closed: wall.shapeClosed, at: point) {
                 wall.setFloorPlanPoints(next)
@@ -1239,7 +1264,8 @@ struct GymMapView: View {
     }
 
     private func nearShapeChrome(of wall: GymArea, point: PlanPoint) -> Bool {
-        nearAddHandle(of: wall, point: point)
+        guard editingShape, routesWall == nil else { return false }
+        return nearAddHandle(of: wall, point: point)
             || nearVertex(of: wall, point: point)
             || nearTrash(of: wall, point: point)
     }
@@ -1327,6 +1353,7 @@ struct GymMapView: View {
 
     private func openRoutes(for area: GymArea) {
         applyRename(to: area)
+        editingShape = false
         routesWall = area
         selectedWall = area
         renameDraft = area.name
@@ -1358,8 +1385,6 @@ struct GymMapView: View {
 
     private func routeList(for area: GymArea) -> some View {
         let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
-        let circleKey = area.id.uuidString
-        let groupedCount = routes.filter { $0.groupKey == circleKey }.count
         return VStack(alignment: .leading, spacing: 12) {
             TextField("Your name on updates", text: $climberName)
                 .textFieldStyle(.roundedBorder)
@@ -1367,7 +1392,7 @@ struct GymMapView: View {
                     ClimberIdentity.name = value
                 }
 
-            Text("Drag grade tags on the map to place them. Group routes to space them in a circle.")
+            Text("Routes space evenly on the wall — closed walls fill a ring. Drag a tag to nudge it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1389,22 +1414,14 @@ struct GymMapView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button {
-                            toggleCircleGroup(route, on: area)
-                        } label: {
-                            Image(systemName: route.groupKey == circleKey ? "circle.grid.cross.fill" : "circle.dashed")
-                                .foregroundStyle(route.groupKey == circleKey ? Color.stravaOrange : Color.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(route.groupKey == circleKey ? "Remove from circle" : "Add to circle")
-                        Button("Remove", role: .destructive) { removeRoute(route) }
+                        Button("Remove", role: .destructive) { removeRoute(route, on: area) }
                             .font(.caption.bold())
                     }
                 }
 
-                if groupedCount > 0 {
-                    Button("Space \(groupedCount) in a circle") {
-                        arrangeCircleGroup(on: area)
+                if routes.count > 1 {
+                    Button("Redistribute on wall") {
+                        redistributeRoutes(on: area)
                     }
                     .buttonStyle(.bordered)
                 }
@@ -1466,33 +1483,18 @@ struct GymMapView: View {
         guard let grade = logGrade, GymJoinMath.isUsableName(name) else { return }
         ClimberIdentity.name = name
         let points = area.floorPlanPoints()
-        let circleKey = area.id.uuidString
-        let grouped = area.routes.filter { $0.groupKey == circleKey }.sorted { $0.createdAt < $1.createdAt }
-        let pin: PlanPoint
-        let groupKey: String?
-        if grouped.isEmpty == false {
-            groupKey = circleKey
-            let existing = grouped.map { PlanPoint(x: $0.x, y: $0.y) }
-            let slots = FloorPlanMath.circleLayout(
-                existing: existing,
-                count: grouped.count + 1,
-                fallbackCenter: FloorPlanMath.centroid(of: points)
-            )
-            for (index, route) in grouped.enumerated() where index < slots.count {
-                route.setPin(x: slots[index].x, y: slots[index].y)
-            }
-            pin = slots.last ?? FloorPlanMath.centroid(of: points)
-        } else if area.shapeClosed {
-            groupKey = nil
-            let nextCount = area.routes.count + 1
-            let slots = FloorPlanMath.routeSlots(count: nextCount, on: points, closed: true)
-            pin = slots.last ?? FloorPlanMath.centroid(of: points)
-        } else {
-            groupKey = nil
-            let nextCount = area.routes.count + 1
-            let slots = FloorPlanMath.routeSlots(count: nextCount, on: points, closed: false)
-            pin = slots.last ?? FloorPlanMath.centroid(of: points)
+        let nextCount = area.routes.count + 1
+        let slots = FloorPlanMath.layoutRoutes(
+            count: nextCount,
+            on: points,
+            closed: area.shapeClosed
+        )
+        let existing = area.routes.sorted { $0.createdAt < $1.createdAt }
+        for (index, route) in existing.enumerated() where index < slots.count {
+            route.setPin(x: slots[index].x, y: slots[index].y)
+            route.groupKey = area.id.uuidString
         }
+        let pin = slots.last ?? FloorPlanMath.centroid(of: points)
         let route = GymRoute(
             grade: grade,
             colorName: draftColor.rawValue,
@@ -1502,43 +1504,41 @@ struct GymMapView: View {
             wall: area,
             updatedBy: name,
             updatedAt: .now,
-            groupKey: groupKey
+            groupKey: area.id.uuidString
         )
         context.insert(route)
         persistMap()
     }
 
-    private func toggleCircleGroup(_ route: GymRoute, on area: GymArea) {
-        let key = area.id.uuidString
-        if route.groupKey == key {
-            route.groupKey = nil
-        } else {
-            route.groupKey = key
-            arrangeCircleGroup(on: area)
-            return
-        }
-        persistMap()
-    }
-
-    private func arrangeCircleGroup(on area: GymArea) {
-        let key = area.id.uuidString
-        let grouped = area.routes.filter { $0.groupKey == key }.sorted { $0.createdAt < $1.createdAt }
-        guard grouped.isEmpty == false else { return }
-        let existing = grouped.map { PlanPoint(x: $0.x, y: $0.y) }
-        let center = FloorPlanMath.centroid(of: area.floorPlanPoints())
-        let slots = FloorPlanMath.circleLayout(
-            existing: existing,
-            count: grouped.count,
-            fallbackCenter: center
+    private func redistributeRoutes(on area: GymArea) {
+        let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
+        guard routes.isEmpty == false else { return }
+        let slots = FloorPlanMath.layoutRoutes(
+            count: routes.count,
+            on: area.floorPlanPoints(),
+            closed: area.shapeClosed
         )
-        for (index, route) in grouped.enumerated() where index < slots.count {
+        for (index, route) in routes.enumerated() where index < slots.count {
             route.setPin(x: slots[index].x, y: slots[index].y)
+            route.groupKey = area.id.uuidString
         }
         persistMap()
     }
 
-    private func removeRoute(_ route: GymRoute) {
+    private func removeRoute(_ route: GymRoute, on area: GymArea) {
         context.delete(route)
+        // Let SwiftData settle, then reflow remaining pins.
+        let remaining = area.routes.filter { $0.id != route.id }.sorted { $0.createdAt < $1.createdAt }
+        if remaining.isEmpty == false {
+            let slots = FloorPlanMath.layoutRoutes(
+                count: remaining.count,
+                on: area.floorPlanPoints(),
+                closed: area.shapeClosed
+            )
+            for (index, item) in remaining.enumerated() where index < slots.count {
+                item.setPin(x: slots[index].x, y: slots[index].y)
+            }
+        }
         persistMap()
     }
 

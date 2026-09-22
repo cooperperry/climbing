@@ -436,9 +436,40 @@ public enum FloorPlanMath {
         if count == 1 {
             return [pointAlong(points: points, closed: closed, t: 0.5)]
         }
+        if closed {
+            // Closed walls form a ring — space evenly around the full loop.
+            return (0 ..< count).map { index in
+                let t = Double(index) / Double(count)
+                return pointAlong(points: points, closed: true, t: t)
+            }
+        }
         return (0 ..< count).map { index in
             let t = Double(index) / Double(count - 1)
-            return pointAlong(points: points, closed: closed, t: t)
+            return pointAlong(points: points, closed: false, t: t)
+        }
+    }
+
+    /// Route pins slightly off the stroke so they don't sit under extend/trash chrome.
+    public static func routeSlotsClearOfStroke(
+        count: Int,
+        on points: [PlanPoint],
+        closed: Bool,
+        offset: Double = 0.032
+    ) -> [PlanPoint] {
+        let slots = routeSlots(count: count, on: points, closed: closed)
+        guard slots.isEmpty == false else { return [] }
+        let center = centroid(of: points)
+        return slots.map { slot in
+            let dx = slot.x - center.x
+            let dy = slot.y - center.y
+            let len = hypot(dx, dy)
+            if len > 1e-6 {
+                // Push outward from the shape center so tags sit outside the wall line.
+                let scale = (len + offset) / len
+                return PlanPoint(x: center.x + dx * scale, y: center.y + dy * scale)
+            }
+            // Degenerate (line through center): nudge "up" on the board.
+            return PlanPoint(x: slot.x, y: max(0, slot.y - offset))
         }
     }
 
@@ -461,6 +492,29 @@ public enum FloorPlanMath {
                 y: center.y + sin(angle) * r
             )
         }
+    }
+
+    /// Preferred radius so a circle of `count` routes fits just outside a wall outline.
+    public static func fittingRadius(around points: [PlanPoint], padding: Double = 0.04) -> Double {
+        guard points.isEmpty == false else { return 0.08 }
+        let center = centroid(of: points)
+        let maxDist = points.map { distance($0, center) }.max() ?? 0.08
+        return max(0.06, maxDist + padding)
+    }
+
+    /// Lay out routes on a wall: closed shapes → ring; open → along the line, clear of the stroke.
+    public static func layoutRoutes(
+        count: Int,
+        on points: [PlanPoint],
+        closed: Bool
+    ) -> [PlanPoint] {
+        guard count > 0 else { return [] }
+        if closed, points.count >= 3 {
+            let center = centroid(of: points)
+            let radius = fittingRadius(around: points)
+            return circleSlots(count: count, center: center, radius: radius)
+        }
+        return routeSlotsClearOfStroke(count: count, on: points, closed: closed)
     }
 
     /// Lay out `count` points in a circle using existing pins for center/radius when possible.
