@@ -784,13 +784,13 @@ struct GymMapView: View {
 
         if isOpenLine, points.isEmpty == false {
             extendHandle(
-                at: FloorPlanMath.addSegmentHandle(after: points),
+                at: extendAnchor(points: points, fromStart: false, in: size),
                 in: size,
                 wall: wall,
                 fromStart: false
             )
             extendHandle(
-                at: FloorPlanMath.addSegmentHandle(before: points),
+                at: extendAnchor(points: points, fromStart: true, in: size),
                 in: size,
                 wall: wall,
                 fromStart: true
@@ -798,17 +798,35 @@ struct GymMapView: View {
         }
     }
 
+    /// A fixed gap past the endpoint, in screen points, so a long wall does not throw the + far away.
+    private func extendAnchor(points: [PlanPoint], fromStart: Bool, in size: CGSize) -> PlanPoint {
+        guard let end = fromStart ? points.first : points.last else {
+            return PlanPoint(x: 0.5, y: 0.5)
+        }
+        let other: PlanPoint? = points.count >= 2 ? (fromStart ? points[1] : points[points.count - 2]) : nil
+        let dx = other.map { end.x - $0.x } ?? (fromStart ? -1 : 1)
+        let dy = other.map { end.y - $0.y } ?? 0
+        let pixelLength = hypot(dx * size.width, dy * size.height)
+        let ux = pixelLength > 1 ? dx * size.width / pixelLength : (fromStart ? -1 : 1)
+        let uy = pixelLength > 1 ? dy * size.height / pixelLength : 0
+        let gap = 32 / max(effectiveZoom, 0.35)
+        let tipX = end.x * size.width + ux * gap
+        let tipY = end.y * size.height + uy * gap
+        return PlanPoint(rawX: tipX / max(size.width, 1), rawY: tipY / max(size.height, 1))
+    }
+
     private func extendHandle(at tip: PlanPoint, in size: CGSize, wall: GymArea, fromStart: Bool) -> some View {
         ZStack {
             Circle()
                 .fill(Color.white)
-                .frame(width: 36, height: 36)
+                .frame(width: 28, height: 28)
                 .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
             Image(systemName: "plus")
-                .font(.body.bold())
+                .font(.caption.bold())
                 .foregroundStyle(Color.stravaOrange)
         }
-        .contentShape(Circle().scale(1.35))
+        .contentShape(Circle().scale(1.4))
+        .scaleEffect(1 / max(effectiveZoom, 0.35))
         .position(pixel(tip, in: size))
         .highPriorityGesture(addSegmentDrag(wall: wall, in: size, fromStart: fromStart))
     }

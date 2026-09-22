@@ -36,14 +36,15 @@ struct GymEntityQuery: EntityStringQuery {
     }
 }
 
-/// Starts a Climber session and the Watch workout. Pair this with a Shortcuts
-/// Arrive automation at your gym.
+/// Starts a Climber session and the Watch workout without opening the app,
+/// so an Arrive automation can run while the phone is locked.
 struct StartClimbingWorkoutIntent: AppIntent {
     static var title: LocalizedStringResource = "Start Climbing Workout"
     static var description = IntentDescription(
-        "Starts a climbing session and the Watch workout. Pick a gym to mark it as I'm here so sends land on that map."
+        "Starts a climbing session and the Watch workout while the phone stays locked. Pick a gym to mark it as I'm here."
     )
-    static var openAppWhenRun: Bool { true }
+    static var openAppWhenRun: Bool { false }
+    static var authenticationPolicy: IntentAuthenticationPolicy { .alwaysAllowed }
 
     @Parameter(
         title: "Gym",
@@ -70,7 +71,8 @@ struct EndClimbingWorkoutIntent: AppIntent {
     static var description = IntentDescription(
         "Ends the current climbing session and the Watch workout."
     )
-    static var openAppWhenRun: Bool { true }
+    static var openAppWhenRun: Bool { false }
+    static var authenticationPolicy: IntentAuthenticationPolicy { .alwaysAllowed }
 
     static var parameterSummary: some ParameterSummary {
         Summary("End climbing workout")

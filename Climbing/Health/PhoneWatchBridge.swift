@@ -2,6 +2,7 @@ import Foundation
 import HealthKit
 import Observation
 import SwiftData
+import UserNotifications
 import WatchConnectivity
 
 /// Phone-side WatchConnectivity: session logging from the Watch, live BPM,
@@ -39,14 +40,35 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
     /// Starts a phone session and the Watch workout. Used by Shortcuts
     /// (Arrive at gym) as well as the in-app Start button path.
     func startClimbingWorkout(gymID: UUID? = nil) {
+        var gymName: String?
         if let context {
             if let gymID {
                 setCurrentGym(id: gymID, in: context)
             }
+            gymName = currentGym(in: context)?.name
             startSession(in: context)
             publishSnapshot()
         }
         send([WatchSync.kind: WatchSync.start])
+        notifyClimbingStarted(gymName: gymName)
+    }
+
+    /// Ask once so an Arrive shortcut can confirm the session while the phone is locked.
+    func prepareArrivalNotification() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    private func notifyClimbingStarted(gymName: String?) {
+        let content = UNMutableNotificationContent()
+        content.title = "Climbing started"
+        content.body = gymName.map { "Session started at \($0)." } ?? "Session started. Check your Watch."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "climber.workout.started",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     /// Ends the phone session and the Watch workout. Used by Shortcuts.

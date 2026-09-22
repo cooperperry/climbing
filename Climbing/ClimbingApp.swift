@@ -14,6 +14,7 @@ struct ClimbingApp: App {
             fatalError("Failed to create the SwiftData ModelContainer: \(error)")
         }
         PhoneWatchBridge.shared.attach(context: container.mainContext)
+        PhoneWatchBridge.shared.prepareArrivalNotification()
     }
 
     var body: some Scene {
