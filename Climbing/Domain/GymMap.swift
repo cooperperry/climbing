@@ -77,6 +77,12 @@ public struct PlanPoint: Codable, Equatable, Sendable {
         self.x = clamped.x
         self.y = clamped.y
     }
+
+    /// Unclamped point for chrome (extend handles may sit slightly off-board).
+    public init(rawX: Double, rawY: Double) {
+        self.x = rawX
+        self.y = rawY
+    }
 }
 
 public enum FloorPlanMath {
@@ -104,7 +110,7 @@ public enum FloorPlanMath {
     public static func extendedPoint(after points: [PlanPoint], step: Double = 0.08) -> PlanPoint {
         guard points.count >= 2 else {
             let anchor = points.first ?? PlanPoint(x: 0.5, y: 0.5)
-            return PlanPoint(x: anchor.x + step, y: anchor.y)
+            return PlanPoint(rawX: anchor.x + step, rawY: anchor.y)
         }
         let last = points[points.count - 1]
         let prev = points[points.count - 2]
@@ -112,9 +118,9 @@ public enum FloorPlanMath {
         let dy = last.y - prev.y
         let len = hypot(dx, dy)
         guard len > 1e-6 else {
-            return PlanPoint(x: last.x + step, y: last.y)
+            return PlanPoint(rawX: last.x + step, rawY: last.y)
         }
-        return PlanPoint(x: last.x + dx / len * step, y: last.y + dy / len * step)
+        return PlanPoint(rawX: last.x + dx / len * step, rawY: last.y + dy / len * step)
     }
 
     public static func encode(_ points: [PlanPoint]) -> Data? {
@@ -290,7 +296,7 @@ public enum FloorPlanMath {
         guard points.count >= 2 else {
             let anchor = points.first ?? PlanPoint(x: 0.5, y: 0.5)
             let use = step ?? fallback
-            return PlanPoint(x: anchor.x - use, y: anchor.y)
+            return PlanPoint(rawX: anchor.x - use, rawY: anchor.y)
         }
         let first = points[0]
         let next = points[1]
@@ -300,9 +306,9 @@ public enum FloorPlanMath {
         let dy = first.y - next.y
         let len = hypot(dx, dy)
         guard len > 1e-6 else {
-            return PlanPoint(x: first.x - use, y: first.y)
+            return PlanPoint(rawX: first.x - use, rawY: first.y)
         }
-        return PlanPoint(x: first.x + dx / len * use, y: first.y + dy / len * use)
+        return PlanPoint(rawX: first.x + dx / len * use, rawY: first.y + dy / len * use)
     }
 
     /// Trash / chrome offset above the shape centroid in board space.
@@ -394,6 +400,46 @@ public enum FloorPlanMath {
     public static func shouldClosePolygon(draft: [PlanPoint], to end: PlanPoint) -> Bool {
         guard draft.count >= 2, let first = draft.first else { return false }
         return distance(end, first) < closeSnapDistance
+    }
+
+    /// Point at fraction `t` (0...1) along an open or closed outline.
+    public static func pointAlong(points: [PlanPoint], closed: Bool, t: Double) -> PlanPoint {
+        let count = segmentCount(points: points, closed: closed)
+        guard count > 0, let first = points.first else {
+            return PlanPoint(x: 0.5, y: 0.5)
+        }
+        var lengths: [Double] = []
+        var total = 0.0
+        for i in 0 ..< count {
+            guard let (a, b) = segmentEndpoints(points: points, closed: closed, index: i) else { continue }
+            let len = distance(a, b)
+            lengths.append(len)
+            total += len
+        }
+        guard total > 1e-9 else { return first }
+        var target = min(1, max(0, t)) * total
+        for i in 0 ..< lengths.count {
+            let len = lengths[i]
+            if target <= len || i == lengths.count - 1 {
+                guard let (a, b) = segmentEndpoints(points: points, closed: closed, index: i) else { return first }
+                let u = len > 1e-9 ? target / len : 0
+                return PlanPoint(x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u)
+            }
+            target -= len
+        }
+        return first
+    }
+
+    /// Evenly space `count` markers along the outline (for route dots on the floor plan).
+    public static func routeSlots(count: Int, on points: [PlanPoint], closed: Bool) -> [PlanPoint] {
+        guard count > 0 else { return [] }
+        if count == 1 {
+            return [pointAlong(points: points, closed: closed, t: 0.5)]
+        }
+        return (0 ..< count).map { index in
+            let t = Double(index) / Double(count - 1)
+            return pointAlong(points: points, closed: closed, t: t)
+        }
     }
 
     // MARK: - Snap / grid (big-gym editing)
