@@ -18,11 +18,13 @@ struct WatchGymMap: View {
                     )
                 ForEach(placedPins(project: project)) { placed in
                     Text(placed.pin.grade)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(placed.pin.holdColor.prefersDarkLabel ? Color.black : Color.white)
-                        .frame(width: 40, height: 40)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                        .frame(width: 18, height: 18)
                         .background(Color(hold: placed.pin.holdColor), in: Circle())
-                        .overlay { Circle().strokeBorder(Color.white, lineWidth: 3) }
+                        .overlay { Circle().strokeBorder(Color.white, lineWidth: 1) }
                         .position(placed.point)
                 }
             }
@@ -80,19 +82,6 @@ struct WatchGymMap: View {
         guard let pin = selectedPin else { return [] }
         return [PlacedWatchPin(pin: pin, point: project(pin.x, pin.y), prominent: true)]
     }
-
-    /// Where the pin sits along the wall, in the same left-to-right sense as the phone map.
-    var placeCue: String {
-        guard let pin = selectedPin else { return "Match this shape to where you're standing." }
-        let xs = wall.outline.map(\.x)
-        guard let minX = xs.min(), let maxX = xs.max(), maxX - minX > 0.04 else {
-            return "Match this shape to where you're standing."
-        }
-        let t = (pin.x - minX) / (maxX - minX)
-        if t < 0.34 { return "Left side of this shape" }
-        if t > 0.66 { return "Right side of this shape" }
-        return "Middle of this shape"
-    }
 }
 
 private struct PlacedWatchPin: Identifiable {
@@ -119,9 +108,6 @@ struct WatchBoulderDetail: View {
             WatchGymMap(wall: wall, highlightedID: pin.id)
                 .allowsHitTesting(false)
             VStack(spacing: 3) {
-                Text(WatchGymMap(wall: wall, highlightedID: pin.id).placeCue)
-                    .font(.caption2.bold())
-                    .lineLimit(1)
                 HStack(spacing: 6) {
                     logButton("Flashed", color: .yellow) {
                         manager.selectLogWall(wall.name)
