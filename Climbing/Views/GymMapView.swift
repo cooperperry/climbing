@@ -46,8 +46,7 @@ struct GymMapView: View {
     @State private var mode: MapMode = .select
     @State private var selectedWall: GymArea?
     @State private var routesWall: GymArea?
-    @State private var wallNameDraft = ""
-    @State private var namingPending: PendingShape?
+    @State private var renameDraft = ""
     @State private var polygonDraft: [PlanPoint] = []
     @State private var rubberBand: RubberBand?
     @State private var shapeDragOrigin: [PlanPoint]?
@@ -57,12 +56,6 @@ struct GymMapView: View {
     @State private var logGrade: String?
     @State private var draftColor: HoldColor = .blue
     @State private var extendingWallID: UUID?
-
-    private struct PendingShape {
-        var points: [PlanPoint]
-        var closed: Bool
-        var suggestedName: String
-    }
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -80,22 +73,19 @@ struct GymMapView: View {
     private var hint: String {
         switch mode {
         case .select:
-            if let wall = selectedWall {
-                if wall.shapeClosed {
-                    return "\(wall.name) — drag corners to resize. Tap an edge to add a corner."
-                }
-                return "\(wall.name) — drag corners, drag the + to add a segment, or Close."
+            if selectedWall != nil {
+                return "Drag corners to reshape. Drag + to add a segment. Name is optional below."
             }
-            return "Tap a wall to select. Tap again for routes."
+            return "Tap a shape to edit it."
         case .line:
-            return "Drag to draw a wall line."
+            return "Drag across the board to draw a wall."
         case .square:
-            return "Drag corner-to-corner to draw a square or room."
+            return "Drag to size a room or cave."
         case .polygon:
             if polygonDraft.isEmpty {
-                return "Drag the first side, then drag each next segment."
+                return "Drag the first side, then keep dragging sides."
             }
-            return "Drag from the last corner. Drag near the start to close, or tap Close."
+            return "Drag the next side. Near the start closes it — or tap Done."
         }
     }
 
@@ -122,15 +112,15 @@ struct GymMapView: View {
                     if newMode != .polygon { polygonDraft = [] }
                     if newMode != .select { selectedWall = nil }
                 }
+                .onChange(of: selectedWall?.id) { _, _ in
+                    renameDraft = selectedWall?.name ?? ""
+                }
 
                 if mode == .polygon, polygonDraft.count >= 2 {
                     HStack {
-                        Button("Close shape") { finishPolygon(closed: true) }
+                        Button("Done") { finishPolygon(closed: polygonDraft.count >= 3) }
                             .buttonStyle(.borderedProminent)
                             .tint(.stravaOrange)
-                            .disabled(polygonDraft.count < 3)
-                        Button("Keep open") { finishPolygon(closed: false) }
-                            .disabled(polygonDraft.count < 2)
                         Button("Cancel", role: .cancel) {
                             polygonDraft = []
                             rubberBand = nil
@@ -154,26 +144,13 @@ struct GymMapView: View {
         .onChange(of: logDiscipline) { _, _ in
             logGrade = scale?.grades.first
         }
-        .alert("Name this wall", isPresented: Binding(
-            get: { namingPending != nil },
-            set: { if $0 == false { namingPending = nil; wallNameDraft = "" } }
-        )) {
-            TextField("Cave, 360 A, Center…", text: $wallNameDraft)
-            Button("Add") { commitPendingWall() }
-            Button("Cancel", role: .cancel) {
-                namingPending = nil
-                wallNameDraft = ""
-            }
-        } message: {
-            Text("Give this section a short name from the gym floor plan.")
-        }
         .sheet(item: $routesWall) { area in
             NavigationStack {
                 ScrollView {
                     routeList(for: area)
                         .padding()
                 }
-                .navigationTitle(area.name)
+                .navigationTitle(FloorPlanMath.displayWallName(area.name))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
@@ -187,24 +164,34 @@ struct GymMapView: View {
 
     @ViewBuilder
     private func selectedWallBar(_ wall: GymArea) -> some View {
-        HStack(spacing: 8) {
-            Text(wall.name)
-                .font(.subheadline.bold())
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            if wall.shapeClosed == false {
-                if wall.floorPlanPoints().count >= 3 {
-                    Button("Close") { closeShape(wall) }
-                        .font(.caption.bold())
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Name (optional)", text: $renameDraft)
+                .textFieldStyle(.roundedBorder)
+                .submitLabel(.done)
+                .onSubmit { applyRename(to: wall) }
+                .onChange(of: renameDraft) { _, value in
+                    wall.name = FloorPlanMath.optionalWallName(value)
+                    if gym.currentWallName != nil || wall.name.isEmpty == false {
+                        gym.currentWallName = wall.name.isEmpty ? nil : wall.name
+                    }
                 }
-                Button("Break") { breakSelectedWall() }
+
+            HStack(spacing: 8) {
+                if wall.shapeClosed == false {
+                    if wall.floorPlanPoints().count >= 3 {
+                        Button("Close") { closeShape(wall) }
+                            .font(.caption.bold())
+                    }
+                    Button("Break") { breakSelectedWall() }
+                        .font(.caption.bold())
+                        .disabled(wall.floorPlanPoints().count < 2)
+                }
+                Button("Routes") { openRoutes(for: wall) }
                     .font(.caption.bold())
-                    .disabled(wall.floorPlanPoints().count < 2)
+                Spacer(minLength: 4)
+                Button("Delete", role: .destructive) { removeWall(wall) }
+                    .font(.caption.bold())
             }
-            Button("Routes") { openRoutes(for: wall) }
-                .font(.caption.bold())
-            Button("Delete", role: .destructive) { removeWall(wall) }
-                .font(.caption.bold())
         }
         .padding(.top, 2)
     }
@@ -312,16 +299,21 @@ struct GymMapView: View {
     }
 
     private func nameTag(_ wall: GymArea, in size: CGSize) -> some View {
+        let label = FloorPlanMath.optionalWallName(wall.name)
         let center = FloorPlanMath.centroid(of: wall.floorPlanPoints())
         let focused = selectedWall?.id == wall.id
-        return Text(wall.name)
-            .font(.caption2.bold())
-            .foregroundStyle(focused ? Color.black : Color.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(focused ? Color.stravaOrange : Color.white.opacity(0.18), in: Capsule())
-            .position(x: center.x * size.width, y: max(14, center.y * size.height - 18))
-            .allowsHitTesting(false)
+        return Group {
+            if label.isEmpty == false || focused {
+                Text(label.isEmpty ? "Name…" : label)
+                    .font(.caption2.bold())
+                    .foregroundStyle(focused ? Color.black : Color.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(focused ? Color.stravaOrange : Color.white.opacity(0.18), in: Capsule())
+                    .position(x: center.x * size.width, y: max(14, center.y * size.height - 18))
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -423,20 +415,21 @@ struct GymMapView: View {
 
                 switch mode {
                 case .line:
-                    guard moved, FloorPlanMath.distance(start, end) >= 0.04 else { return }
-                    offerName(points: [start, end], closed: false, prefix: "Wall")
+                    guard moved, FloorPlanMath.isUsableStroke(from: start, to: end) else { return }
+                    createWall(points: [start, end], closed: false)
                 case .square:
                     guard moved else { return }
                     let rect = FloorPlanMath.rectangle(from: start, to: end)
-                    let w = FloorPlanMath.distance(rect[0], rect[1])
-                    let h = FloorPlanMath.distance(rect[0], rect[3])
-                    guard w >= 0.04, h >= 0.04 else { return }
-                    offerName(points: rect, closed: true, prefix: "Room")
+                    guard FloorPlanMath.isUsableRectangle(rect) else { return }
+                    createWall(points: rect, closed: true)
                 case .polygon:
                     commitPolygonDrag(start: start, end: end, moved: moved)
                 case .select:
                     if moved {
-                        if selectedWall != nil { persistMap() }
+                        if selectedWall != nil {
+                            applyRename(to: selectedWall)
+                            persistMap()
+                        }
                         return
                     }
                     handleSelectTap(at: end)
@@ -446,17 +439,16 @@ struct GymMapView: View {
 
     private func commitPolygonDrag(start: PlanPoint, end: PlanPoint, moved: Bool) {
         if polygonDraft.isEmpty {
-            guard moved, FloorPlanMath.distance(start, end) >= 0.04 else { return }
+            guard moved, FloorPlanMath.isUsableStroke(from: start, to: end) else { return }
             polygonDraft = [start, end]
             return
         }
         guard moved else { return }
-        if let first = polygonDraft.first,
-           FloorPlanMath.distance(end, first) < 0.05,
-           polygonDraft.count >= 2 {
+        if FloorPlanMath.shouldClosePolygon(draft: polygonDraft, to: end) {
             finishPolygon(closed: true)
             return
         }
+        guard FloorPlanMath.isUsableStroke(from: polygonDraft.last ?? start, to: end) else { return }
         polygonDraft.append(end)
     }
 
@@ -468,30 +460,45 @@ struct GymMapView: View {
             return
         }
         if let hit = hitTest(point) {
-            if selectedWall?.id == hit.id {
-                openRoutes(for: hit)
-            } else {
-                selectedWall = hit
-                gym.currentWallName = hit.name
-                persistMap()
-            }
+            applyRename(to: selectedWall)
+            selectedWall = hit
+            renameDraft = hit.name
+            gym.currentWallName = hit.name.isEmpty ? nil : hit.name
+            persistMap()
         } else {
+            applyRename(to: selectedWall)
             selectedWall = nil
+            renameDraft = ""
         }
     }
 
-    private func offerName(points: [PlanPoint], closed: Bool, prefix: String) {
-        namingPending = PendingShape(points: points, closed: closed, suggestedName: nextDefaultName(prefix: prefix))
-        wallNameDraft = namingPending?.suggestedName ?? ""
-        mode = .select
+    private func createWall(points: [PlanPoint], closed: Bool) {
+        let center = FloorPlanMath.centroid(of: points)
+        let area = GymArea(
+            name: "",
+            x: center.x,
+            y: center.y,
+            gym: gym,
+            shapePointsData: FloorPlanMath.encode(points),
+            shapeClosed: closed
+        )
+        context.insert(area)
+        for item in gyms { item.isCurrent = (item.id == gym.id) }
+        persistMap()
     }
 
     private func finishPolygon(closed: Bool) {
         let points = polygonDraft
         polygonDraft = []
         rubberBand = nil
-        guard points.count >= (closed ? 3 : 2) else { return }
-        offerName(points: points, closed: closed, prefix: closed ? "Zone" : "Wall")
+        let needs = closed ? 3 : 2
+        guard points.count >= needs else { return }
+        createWall(points: points, closed: closed && points.count >= 3)
+    }
+
+    private func applyRename(to wall: GymArea?) {
+        guard let wall else { return }
+        wall.name = FloorPlanMath.optionalWallName(renameDraft)
     }
 
     private func closeShape(_ wall: GymArea) {
@@ -510,8 +517,9 @@ struct GymMapView: View {
         let mid = FloorPlanMath.project(p: FloorPlanMath.centroid(of: [a, b]), ontoSegmentFrom: a, to: b)
         guard let parts = FloorPlanMath.split(points: points, at: mid, maxDistance: 1) else { return }
         wall.setFloorPlanPoints(parts.left)
+        let rightName = wall.name.isEmpty ? "" : "\(wall.name) B"
         let right = GymArea(
-            name: "\(wall.name) B",
+            name: rightName,
             x: FloorPlanMath.centroid(of: parts.right).x,
             y: FloorPlanMath.centroid(of: parts.right).y,
             gym: gym,
@@ -521,33 +529,6 @@ struct GymMapView: View {
         context.insert(right)
         persistMap()
         selectedWall = wall
-    }
-
-    private func commitPendingWall() {
-        guard let pending = namingPending else { return }
-        let name = wallNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        namingPending = nil
-        wallNameDraft = ""
-        guard GymJoinMath.isUsableName(name) else { return }
-        let center = FloorPlanMath.centroid(of: pending.points)
-        let area = GymArea(
-            name: name,
-            x: center.x,
-            y: center.y,
-            gym: gym,
-            shapePointsData: FloorPlanMath.encode(pending.points),
-            shapeClosed: pending.closed
-        )
-        context.insert(area)
-        selectedWall = area
-        mode = .select
-        gym.currentWallName = name
-        for item in gyms { item.isCurrent = (item.id == gym.id) }
-        persistMap()
-    }
-
-    private func nextDefaultName(prefix: String) -> String {
-        "\(prefix) \(gym.areas.count + 1)"
     }
 
     private func hitTest(_ point: PlanPoint) -> GymArea? {
@@ -597,9 +578,10 @@ struct GymMapView: View {
     }
 
     private func openRoutes(for area: GymArea) {
+        applyRename(to: area)
         routesWall = area
         selectedWall = area
-        gym.currentWallName = area.name
+        gym.currentWallName = area.name.isEmpty ? nil : area.name
         for item in gyms { item.isCurrent = (item.id == gym.id) }
         persistMap()
     }
@@ -611,7 +593,10 @@ struct GymMapView: View {
 
     private func removeWall(_ area: GymArea) {
         let name = area.name
-        if selectedWall?.id == area.id { selectedWall = nil }
+        if selectedWall?.id == area.id {
+            selectedWall = nil
+            renameDraft = ""
+        }
         if routesWall?.id == area.id { routesWall = nil }
         context.delete(area)
         if gym.currentWallName == name {

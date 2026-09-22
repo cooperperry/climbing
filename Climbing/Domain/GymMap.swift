@@ -237,4 +237,37 @@ public enum FloorPlanMath {
         guard left.count >= 2, right.count >= 2 else { return nil }
         return (left, right)
     }
+
+    /// Minimum drag length in board space before a stroke becomes a wall.
+    public static let minimumStroke: Double = 0.04
+
+    public static func isUsableStroke(from a: PlanPoint, to b: PlanPoint) -> Bool {
+        distance(a, b) >= minimumStroke
+    }
+
+    public static func isUsableRectangle(_ points: [PlanPoint]) -> Bool {
+        guard points.count == 4 else { return false }
+        let width = distance(points[0], points[1])
+        let height = distance(points[0], points[3])
+        return width >= minimumStroke && height >= minimumStroke
+    }
+
+    /// Empty names are allowed; blank strings normalize to "".
+    public static func optionalWallName(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Label for UI / Watch when the climber has not named the wall yet.
+    public static func displayWallName(_ raw: String) -> String {
+        let name = optionalWallName(raw)
+        return name.isEmpty ? "Untitled" : name
+    }
+
+    /// Snap-close radius when finishing a polygon near its start.
+    public static let closeSnapDistance: Double = 0.055
+
+    public static func shouldClosePolygon(draft: [PlanPoint], to end: PlanPoint) -> Bool {
+        guard draft.count >= 2, let first = draft.first else { return false }
+        return distance(end, first) < closeSnapDistance
+    }
 }

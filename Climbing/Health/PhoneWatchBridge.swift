@@ -407,7 +407,7 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         let areas = gym.areas.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let walls = areas.map { area in
             WatchWall(
-                name: area.name,
+                name: FloorPlanMath.displayWallName(area.name),
                 routes: area.routes
                     .sorted { $0.createdAt < $1.createdAt }
                     .map {
@@ -424,9 +424,9 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         }
         let current = WatchGymContext.pickWall(
             walls: walls.map(\.name),
-            phoneCurrent: gym.currentWallName,
+            phoneCurrent: gym.currentWallName.map(FloorPlanMath.displayWallName),
             previousPhoneCurrent: nil,
-            watchWall: gym.currentWallName
+            watchWall: gym.currentWallName.map(FloorPlanMath.displayWallName)
         )
         return WatchGymContext(gymName: gym.name, walls: walls, currentWall: current)
     }
