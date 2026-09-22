@@ -517,6 +517,37 @@ public enum FloorPlanMath {
         return routeSlotsClearOfStroke(count: count, on: points, closed: closed)
     }
 
+    /// Prefer a ring whenever the outline can support one (closed, or open ends nearly touching).
+    public static func layoutRoutesMerged(
+        count: Int,
+        on points: [PlanPoint],
+        closed: Bool
+    ) -> [PlanPoint] {
+        guard count > 0 else { return [] }
+        let useRing = closed || shouldCloseOpenShape(points: points) || points.count >= 4
+        if useRing, points.count >= 3 {
+            let center = centroid(of: points)
+            let radius = fittingRadius(around: points)
+            return circleSlots(count: count, center: center, radius: radius)
+        }
+        return layoutRoutes(count: count, on: points, closed: closed)
+    }
+
+    /// Combine pin lists from several walls into one evenly spaced ring around their shared center.
+    public static func mergeRouteLayout(
+        routeCounts: Int,
+        wallOutlines: [[PlanPoint]]
+    ) -> [PlanPoint] {
+        guard routeCounts > 0 else { return [] }
+        let allPoints = wallOutlines.flatMap { $0 }
+        guard allPoints.isEmpty == false else {
+            return circleSlots(count: routeCounts, center: PlanPoint(x: 0.5, y: 0.5), radius: 0.12)
+        }
+        let center = centroid(of: allPoints)
+        let radius = fittingRadius(around: allPoints, padding: 0.05)
+        return circleSlots(count: routeCounts, center: center, radius: radius)
+    }
+
     /// Lay out `count` points in a circle using existing pins for center/radius when possible.
     public static func circleLayout(
         existing: [PlanPoint],

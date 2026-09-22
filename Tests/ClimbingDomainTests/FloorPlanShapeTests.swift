@@ -198,6 +198,19 @@ final class FloorPlanShapeTests: XCTestCase {
         }
     }
 
+    func testMergeRouteLayoutCombinesOutlinesIntoOneRing() {
+        let a = FloorPlanMath.square(center: PlanPoint(x: 0.35, y: 0.5), size: 0.12)
+        let b = FloorPlanMath.square(center: PlanPoint(x: 0.65, y: 0.5), size: 0.12)
+        let slots = FloorPlanMath.mergeRouteLayout(routeCounts: 8, wallOutlines: [a, b])
+        XCTAssertEqual(slots.count, 8)
+        let center = FloorPlanMath.centroid(of: a + b)
+        let distances = slots.map { FloorPlanMath.distance($0, center) }
+        let first = distances[0]
+        for d in distances {
+            XCTAssertEqual(d, first, accuracy: 1e-6)
+        }
+    }
+
     func testCircleSlotsFillRing() {
         let center = PlanPoint(x: 0.5, y: 0.5)
         let slots = FloorPlanMath.circleSlots(count: 4, center: center, radius: 0.1)

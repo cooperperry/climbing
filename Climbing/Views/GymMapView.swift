@@ -67,6 +67,7 @@ struct GymMapView: View {
     @State private var draftColor: HoldColor = .blue
     @State private var extendingWallID: UUID?
     @State private var draggingRouteID: UUID?
+    @State private var mergingRouteIDs: Set<UUID> = []
     @State private var dragEditsShape = false
     @State private var isEditingName = false
     @State private var wallPendingDelete: GymArea?
@@ -718,6 +719,7 @@ struct GymMapView: View {
         let routes = wall.routes.sorted { $0.createdAt < $1.createdAt }
         return ForEach(routes) { route in
             let pos = PlanPoint(x: route.x, y: route.y)
+            let merging = mergingRouteIDs.contains(route.id)
             Text(route.grade)
                 .font(.caption2.bold())
                 .foregroundStyle(route.holdColor.prefersDarkLabel ? Color.black : Color.white)
@@ -726,14 +728,29 @@ struct GymMapView: View {
                 .background(Color(hold: route.holdColor), in: Capsule())
                 .overlay {
                     Capsule().strokeBorder(
-                        draggingRouteID == route.id ? Color.stravaOrange : Color.white.opacity(0.85),
-                        lineWidth: draggingRouteID == route.id ? 2 : 1
+                        draggingRouteID == route.id || merging
+                            ? Color.stravaOrange
+                            : Color.white.opacity(0.85),
+                        lineWidth: draggingRouteID == route.id || merging ? 2 : 1
                     )
                 }
-                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                .shadow(
+                    color: .black.opacity(merging ? 0.2 : 0.35),
+                    radius: merging ? 4 : 2,
+                    y: merging ? 2 : 1
+                )
+                .scaleEffect(merging ? 0.92 : (draggingRouteID == route.id ? 1.06 : 1.0))
+                .opacity(merging ? 0.92 : 1.0)
                 .position(pixel(pos, in: size))
+                .animation(Self.routeSpring, value: route.x)
+                .animation(Self.routeSpring, value: route.y)
+                .animation(Self.routeSpring, value: merging)
                 .highPriorityGesture(routeDrag(route, in: size))
         }
+    }
+
+    private static var routeSpring: Animation {
+        .spring(response: 0.48, dampingFraction: 0.86)
     }
 
     @ViewBuilder
@@ -1179,17 +1196,18 @@ struct GymMapView: View {
     private func closeShape(_ wall: GymArea) {
         guard wall.floorPlanPoints().count >= 3 else { return }
         wall.shapeClosed = true
-        persistMap()
+        mergeRoutes(on: wall, preferRing: true)
     }
 
     /// Snap open ends together into a closed loop, or merge into a neighboring open wall.
     private func tryLinkOrClose(_ wall: GymArea) {
         guard wall.shapeClosed == false else { return }
-        var points = wall.floorPlanPoints()
+        let points = wall.floorPlanPoints()
         guard points.count >= 2 else { return }
 
         if FloorPlanMath.shouldCloseOpenShape(points: points) {
             wall.shapeClosed = true
+            mergeRoutes(on: wall, preferRing: true)
             return
         }
 
@@ -1197,7 +1215,8 @@ struct GymMapView: View {
             let otherPoints = other.floorPlanPoints()
             guard let joined = FloorPlanMath.joinOpenPolylines(points, otherPoints) else { continue }
             wall.setFloorPlanPoints(joined)
-            for route in other.routes {
+            let absorbed = other.routes
+            for route in absorbed {
                 route.wall = wall
             }
             if selectedWall?.id == other.id {
@@ -1210,6 +1229,7 @@ struct GymMapView: View {
             if FloorPlanMath.shouldCloseOpenShape(points: joined) {
                 wall.shapeClosed = true
             }
+            mergeRoutes(on: wall, preferRing: wall.shapeClosed || joined.count >= 4)
             return
         }
     }
@@ -1385,6 +1405,10 @@ struct GymMapView: View {
 
     private func routeList(for area: GymArea) -> some View {
         let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
+        let zonePeers = wallsOnFloor.filter {
+            $0.id != area.id && $0.displayZone == area.displayZone && $0.routes.isEmpty == false
+        }
+        let peerRouteCount = zonePeers.reduce(0) { $0 + $1.routes.count }
         return VStack(alignment: .leading, spacing: 12) {
             TextField("Your name on updates", text: $climberName)
                 .textFieldStyle(.roundedBorder)
@@ -1392,7 +1416,7 @@ struct GymMapView: View {
                     ClimberIdentity.name = value
                 }
 
-            Text("Routes space evenly on the wall — closed walls fill a ring. Drag a tag to nudge it.")
+            Text("Routes ease into place on the wall. Merge pulls nearby walls into one ring.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1420,11 +1444,19 @@ struct GymMapView: View {
                 }
 
                 if routes.count > 1 {
-                    Button("Redistribute on wall") {
-                        redistributeRoutes(on: area)
+                    Button("Redistribute") {
+                        mergeRoutes(on: area, preferRing: area.shapeClosed || routes.count >= 3)
                     }
                     .buttonStyle(.bordered)
                 }
+            }
+
+            if peerRouteCount > 0 {
+                Button("Merge \(peerRouteCount) nearby into a circle") {
+                    mergeZoneRoutes(into: area)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.stravaOrange)
             }
 
             Picker("Type", selection: $logDiscipline) {
@@ -1484,22 +1516,17 @@ struct GymMapView: View {
         ClimberIdentity.name = name
         let points = area.floorPlanPoints()
         let nextCount = area.routes.count + 1
-        let slots = FloorPlanMath.layoutRoutes(
-            count: nextCount,
-            on: points,
-            closed: area.shapeClosed
-        )
+        let preferRing = area.shapeClosed || nextCount >= 3
+        let slots = preferRing
+            ? FloorPlanMath.layoutRoutesMerged(count: nextCount, on: points, closed: area.shapeClosed)
+            : FloorPlanMath.layoutRoutes(count: nextCount, on: points, closed: area.shapeClosed)
         let existing = area.routes.sorted { $0.createdAt < $1.createdAt }
-        for (index, route) in existing.enumerated() where index < slots.count {
-            route.setPin(x: slots[index].x, y: slots[index].y)
-            route.groupKey = area.id.uuidString
-        }
-        let pin = slots.last ?? FloorPlanMath.centroid(of: points)
+        let start = FloorPlanMath.centroid(of: points)
         let route = GymRoute(
             grade: grade,
             colorName: draftColor.rawValue,
-            x: pin.x,
-            y: pin.y,
+            x: start.x,
+            y: start.y,
             discipline: logDiscipline,
             wall: area,
             updatedBy: name,
@@ -1507,37 +1534,84 @@ struct GymMapView: View {
             groupKey: area.id.uuidString
         )
         context.insert(route)
+        animateRouteLayout(existing + [route], to: slots)
         persistMap()
     }
 
-    private func redistributeRoutes(on area: GymArea) {
-        let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
-        guard routes.isEmpty == false else { return }
-        let slots = FloorPlanMath.layoutRoutes(
-            count: routes.count,
-            on: area.floorPlanPoints(),
-            closed: area.shapeClosed
-        )
-        for (index, route) in routes.enumerated() where index < slots.count {
-            route.setPin(x: slots[index].x, y: slots[index].y)
-            route.groupKey = area.id.uuidString
+    private func mergeZoneRoutes(into area: GymArea) {
+        let peers = wallsOnFloor.filter {
+            $0.id != area.id && $0.displayZone == area.displayZone
         }
+        var absorbed: [GymRoute] = []
+        for peer in peers {
+            for route in peer.routes {
+                route.wall = area
+                route.groupKey = area.id.uuidString
+                absorbed.append(route)
+            }
+        }
+        guard absorbed.isEmpty == false || area.routes.count > 1 else { return }
+        let outlines = ([area] + peers).map { $0.floorPlanPoints() }
+        let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
+        let slots = FloorPlanMath.mergeRouteLayout(
+            routeCounts: routes.count,
+            wallOutlines: outlines
+        )
+        animateRouteLayout(routes, to: slots)
         persistMap()
+    }
+
+    private func mergeRoutes(on area: GymArea, preferRing: Bool) {
+        let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
+        guard routes.isEmpty == false else {
+            persistMap()
+            return
+        }
+        let points = area.floorPlanPoints()
+        let slots = preferRing
+            ? FloorPlanMath.layoutRoutesMerged(count: routes.count, on: points, closed: area.shapeClosed)
+            : FloorPlanMath.layoutRoutes(count: routes.count, on: points, closed: area.shapeClosed)
+        animateRouteLayout(routes, to: slots)
+        persistMap()
+    }
+
+    private func animateRouteLayout(_ routes: [GymRoute], to slots: [PlanPoint]) {
+        let ids = Set(routes.map(\.id))
+        mergingRouteIDs = ids
+        for (index, route) in routes.enumerated() {
+            guard index < slots.count else { continue }
+            let target = slots[index]
+            let delay = Double(index) * 0.045
+            withAnimation(Self.routeSpring.delay(delay)) {
+                route.setPin(x: target.x, y: target.y)
+                route.groupKey = route.wall?.id.uuidString ?? route.groupKey
+            }
+        }
+        let settle = 0.48 + Double(max(routes.count - 1, 0)) * 0.045 + 0.12
+        DispatchQueue.main.asyncAfter(deadline: .now() + settle) {
+            withAnimation(Self.routeSpring) {
+                mergingRouteIDs = []
+            }
+        }
     }
 
     private func removeRoute(_ route: GymRoute, on area: GymArea) {
         context.delete(route)
-        // Let SwiftData settle, then reflow remaining pins.
         let remaining = area.routes.filter { $0.id != route.id }.sorted { $0.createdAt < $1.createdAt }
         if remaining.isEmpty == false {
-            let slots = FloorPlanMath.layoutRoutes(
-                count: remaining.count,
-                on: area.floorPlanPoints(),
-                closed: area.shapeClosed
-            )
-            for (index, item) in remaining.enumerated() where index < slots.count {
-                item.setPin(x: slots[index].x, y: slots[index].y)
-            }
+            let preferRing = area.shapeClosed || remaining.count >= 3
+            let slots = preferRing
+                ? FloorPlanMath.layoutRoutesMerged(
+                    count: remaining.count,
+                    on: area.floorPlanPoints(),
+                    closed: area.shapeClosed
+                )
+                : FloorPlanMath.layoutRoutes(
+                    count: remaining.count,
+                    on: area.floorPlanPoints(),
+                    closed: area.shapeClosed
+                )
+            animateRouteLayout(remaining, to: slots)
         }
         persistMap()
     }
