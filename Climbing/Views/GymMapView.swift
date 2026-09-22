@@ -860,7 +860,7 @@ struct GymMapView: View {
     }
 
     private static var routeSpring: Animation {
-        .spring(response: 0.4, dampingFraction: 0.52)
+        .spring(response: 0.46, dampingFraction: 0.74)
     }
 
     @ViewBuilder
@@ -1020,7 +1020,7 @@ struct GymMapView: View {
                 }
 
                 draggingRouteID = route.id
-                let tip = PlanPoint(
+                var tip = PlanPoint(
                     x: finger.x + routeDragSession.grabDeltaX,
                     y: finger.y + routeDragSession.grabDeltaY
                 )
@@ -1032,43 +1032,49 @@ struct GymMapView: View {
                     in: board
                 ) {
                     mergeTargetRouteID = other.id
+                    tip = FloorPlanMath.magneticPull(
+                        from: tip,
+                        toward: PlanPoint(x: other.x, y: other.y)
+                    )
                 } else {
                     mergeTargetRouteID = nil
                 }
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
-                let placed = lockToWall(tip, route: route)
                 withTransaction(transaction) {
-                    route.setPin(x: placed.x, y: placed.y)
+                    route.setPin(x: tip.x, y: tip.y)
                 }
             }
             .onEnded { _ in
                 let movedCluster = routeDragSession.movingCluster
+                let dropped = PlanPoint(x: route.x, y: route.y)
+                let origin = routeDragSession.origin
                 routeDragSession.cancelHold()
+                routeDragSession.end()
+                draggingRouteID = nil
+                let targetID = mergeTargetRouteID
+                mergeTargetRouteID = nil
+
                 if movedCluster {
-                    draggingRouteID = nil
-                    mergeTargetRouteID = nil
-                    routeDragSession.end()
                     persistMap()
                     return
                 }
-                if let targetID = mergeTargetRouteID,
-                   let target = routeOnFloor(id: targetID) {
+                if let targetID, let target = routeOnFloor(id: targetID) {
                     snapMergeRoutes(dragged: route, onto: target)
-                } else if let origin = routeDragSession.origin, route.groupKey != nil {
-                    let moved = FloorPlanMath.distance(
-                        PlanPoint(x: route.x, y: route.y),
-                        origin
-                    )
+                } else if let snapped = snapOntoWall(near: dropped, route: route) {
+                    withAnimation(Self.routeSpring) {
+                        route.setPin(x: snapped.x, y: snapped.y)
+                    }
+                } else if let origin, route.groupKey != nil {
+                    let moved = FloorPlanMath.distance(dropped, origin)
                     if moved >= FloorPlanMath.routeUnmergeDistance {
                         unmergeRoute(route)
                     } else {
-                        route.setPin(x: origin.x, y: origin.y)
+                        withAnimation(Self.routeSpring) {
+                            route.setPin(x: origin.x, y: origin.y)
+                        }
                     }
                 }
-                draggingRouteID = nil
-                mergeTargetRouteID = nil
-                routeDragSession.end()
                 persistMap()
             }
     }
@@ -1094,12 +1100,15 @@ struct GymMapView: View {
         }
     }
 
-    /// Keep a loose pin on its wall. A merge still wins when another pin is the target.
-    private func lockToWall(_ tip: PlanPoint, route: GymRoute) -> PlanPoint {
-        guard mergeTargetRouteID == nil, let wall = route.wall else { return tip }
+    /// Snap onto the wall only when the pin is dropped on top of it.
+    private func snapOntoWall(near tip: PlanPoint, route: GymRoute) -> PlanPoint? {
+        guard let wall = route.wall else { return nil }
         let points = wall.floorPlanPoints()
-        guard points.count >= 2 else { return tip }
-        return FloorPlanMath.closestPoint(on: points, closed: wall.shapeClosed, to: tip)
+        guard points.count >= 2 else { return nil }
+        let snapped = FloorPlanMath.closestPoint(on: points, closed: wall.shapeClosed, to: tip)
+        guard FloorPlanMath.distance(snapped, tip) <= 0.05 else { return nil }
+        guard FloorPlanMath.distance(snapped, tip) > 0.004 else { return nil }
+        return snapped
     }
 
     private func buildWallsFromSketch() {
