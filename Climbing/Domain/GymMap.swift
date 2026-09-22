@@ -548,6 +548,42 @@ public enum FloorPlanMath {
         return circleSlots(count: routeCounts, center: center, radius: radius)
     }
 
+    /// How close two route pins must be to snap-merge on drag.
+    public static let routeMergeDistance: Double = 0.055
+
+    /// Soft magnetic pull while dragging one pin toward another.
+    public static func magneticPull(
+        from point: PlanPoint,
+        toward target: PlanPoint,
+        threshold: Double = routeMergeDistance
+    ) -> PlanPoint {
+        let d = distance(point, target)
+        guard d > 1e-9, d < threshold else { return point }
+        let strength = 1 - (d / threshold)
+        let t = min(1, strength * 0.55)
+        return PlanPoint(
+            x: point.x + (target.x - point.x) * t,
+            y: point.y + (target.y - point.y) * t
+        )
+    }
+
+    /// Circle layout for a drag-merged cluster around the drop point.
+    public static func dragMergedCircle(
+        count: Int,
+        around center: PlanPoint,
+        existing: [PlanPoint]
+    ) -> [PlanPoint] {
+        guard count > 0 else { return [] }
+        let radius: Double
+        if existing.count >= 2 {
+            let mean = existing.map { distance($0, center) }.reduce(0, +) / Double(existing.count)
+            radius = max(0.045, mean)
+        } else {
+            radius = max(0.05, 0.035 + Double(count) * 0.012)
+        }
+        return circleSlots(count: count, center: center, radius: radius)
+    }
+
     /// Lay out `count` points in a circle using existing pins for center/radius when possible.
     public static func circleLayout(
         existing: [PlanPoint],

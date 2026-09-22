@@ -211,6 +211,25 @@ final class FloorPlanShapeTests: XCTestCase {
         }
     }
 
+    func testMagneticPullDrawsTowardTarget() {
+        let from = PlanPoint(x: 0.50, y: 0.50)
+        let toward = PlanPoint(x: 0.54, y: 0.50)
+        let pulled = FloorPlanMath.magneticPull(from: from, toward: toward)
+        XCTAssertGreaterThan(pulled.x, from.x)
+        XCTAssertLessThan(pulled.x, toward.x)
+    }
+
+    func testDragMergedCircleGrowsWithCount() {
+        let center = PlanPoint(x: 0.5, y: 0.5)
+        let two = FloorPlanMath.dragMergedCircle(count: 2, around: center, existing: [])
+        let five = FloorPlanMath.dragMergedCircle(count: 5, around: center, existing: [])
+        XCTAssertEqual(two.count, 2)
+        XCTAssertEqual(five.count, 5)
+        let r2 = FloorPlanMath.distance(two[0], center)
+        let r5 = FloorPlanMath.distance(five[0], center)
+        XCTAssertGreaterThan(r5, r2)
+    }
+
     func testCircleSlotsFillRing() {
         let center = PlanPoint(x: 0.5, y: 0.5)
         let slots = FloorPlanMath.circleSlots(count: 4, center: center, radius: 0.1)

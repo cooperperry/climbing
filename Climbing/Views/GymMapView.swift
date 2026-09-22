@@ -67,6 +67,7 @@ struct GymMapView: View {
     @State private var draftColor: HoldColor = .blue
     @State private var extendingWallID: UUID?
     @State private var draggingRouteID: UUID?
+    @State private var mergeTargetRouteID: UUID?
     @State private var mergingRouteIDs: Set<UUID> = []
     @State private var dragEditsShape = false
     @State private var isEditingName = false
@@ -138,7 +139,7 @@ struct GymMapView: View {
             }
         }
         if selectedWall != nil {
-            return "Tap Routes to set climbs, or Edit shape to extend and reshape."
+            return "Tap Routes to set climbs. Drag grade tags together to merge them into a ring."
         }
         return "Pinch to zoom, drag to pan. Tap a wall to select it."
     }
@@ -720,6 +721,8 @@ struct GymMapView: View {
         return ForEach(routes) { route in
             let pos = PlanPoint(x: route.x, y: route.y)
             let merging = mergingRouteIDs.contains(route.id)
+            let isTarget = mergeTargetRouteID == route.id
+            let isDragging = draggingRouteID == route.id
             Text(route.grade)
                 .font(.caption2.bold())
                 .foregroundStyle(route.holdColor.prefersDarkLabel ? Color.black : Color.white)
@@ -728,23 +731,29 @@ struct GymMapView: View {
                 .background(Color(hold: route.holdColor), in: Capsule())
                 .overlay {
                     Capsule().strokeBorder(
-                        draggingRouteID == route.id || merging
+                        isDragging || isTarget || merging
                             ? Color.stravaOrange
                             : Color.white.opacity(0.85),
-                        lineWidth: draggingRouteID == route.id || merging ? 2 : 1
+                        lineWidth: isDragging || isTarget || merging ? 2 : 1
                     )
                 }
                 .shadow(
-                    color: .black.opacity(merging ? 0.2 : 0.35),
-                    radius: merging ? 4 : 2,
-                    y: merging ? 2 : 1
+                    color: .black.opacity(merging || isTarget ? 0.18 : 0.35),
+                    radius: merging || isTarget ? 5 : 2,
+                    y: merging || isTarget ? 2 : 1
                 )
-                .scaleEffect(merging ? 0.92 : (draggingRouteID == route.id ? 1.06 : 1.0))
+                .scaleEffect(
+                    isTarget ? 1.08
+                        : merging ? 0.92
+                        : isDragging ? 1.06
+                        : 1.0
+                )
                 .opacity(merging ? 0.92 : 1.0)
                 .position(pixel(pos, in: size))
                 .animation(Self.routeSpring, value: route.x)
                 .animation(Self.routeSpring, value: route.y)
                 .animation(Self.routeSpring, value: merging)
+                .animation(Self.routeSpring, value: isTarget)
                 .highPriorityGesture(routeDrag(route, in: size))
         }
     }
@@ -857,13 +866,85 @@ struct GymMapView: View {
             .onChanged { value in
                 draggingRouteID = route.id
                 let board = canvasSize == .zero ? size : canvasSize
-                let point = normalized(value.location, in: board)
+                var point = normalized(value.location, in: board)
+                if let other = nearestRoutePin(to: point, excluding: route.id) {
+                    mergeTargetRouteID = other.id
+                    point = FloorPlanMath.magneticPull(
+                        from: point,
+                        toward: PlanPoint(x: other.x, y: other.y)
+                    )
+                } else {
+                    mergeTargetRouteID = nil
+                }
                 route.setPin(x: point.x, y: point.y)
             }
             .onEnded { _ in
+                if let targetID = mergeTargetRouteID,
+                   let target = routeOnFloor(id: targetID) {
+                    snapMergeRoutes(dragged: route, onto: target)
+                }
                 draggingRouteID = nil
+                mergeTargetRouteID = nil
                 persistMap()
             }
+    }
+
+    private func allFloorRoutes() -> [GymRoute] {
+        wallsOnFloor.flatMap(\.routes)
+    }
+
+    private func routeOnFloor(id: UUID) -> GymRoute? {
+        allFloorRoutes().first { $0.id == id }
+    }
+
+    private func nearestRoutePin(to point: PlanPoint, excluding id: UUID) -> GymRoute? {
+        var best: (GymRoute, Double)?
+        for route in allFloorRoutes() where route.id != id {
+            let d = FloorPlanMath.distance(point, PlanPoint(x: route.x, y: route.y))
+            if d < FloorPlanMath.routeMergeDistance, best == nil || d < best!.1 {
+                best = (route, d)
+            }
+        }
+        return best?.0
+    }
+
+    /// Drag two (or more) route tags together → shared group, spring into a small ring.
+    private func snapMergeRoutes(dragged: GymRoute, onto target: GymRoute) {
+        let host = target.wall ?? dragged.wall
+        let key = target.groupKey ?? dragged.groupKey ?? UUID().uuidString
+
+        var cluster = allFloorRoutes().filter { route in
+            if route.id == dragged.id || route.id == target.id { return true }
+            if let g = route.groupKey, g == key { return true }
+            if let g = dragged.groupKey, g == route.groupKey { return true }
+            if let g = target.groupKey, g == route.groupKey { return true }
+            return false
+        }
+        // De-dupe by id
+        var seen = Set<UUID>()
+        cluster = cluster.filter { seen.insert($0.id).inserted }
+
+        for route in cluster {
+            route.wall = host
+            route.groupKey = key
+        }
+
+        let sorted = cluster.sorted { $0.createdAt < $1.createdAt }
+        let existing = sorted.map { PlanPoint(x: $0.x, y: $0.y) }
+        let center = PlanPoint(
+            x: (dragged.x + target.x) / 2,
+            y: (dragged.y + target.y) / 2
+        )
+        let slots = FloorPlanMath.dragMergedCircle(
+            count: sorted.count,
+            around: center,
+            existing: existing
+        )
+        if let host {
+            selectedWall = host
+            if routesWall != nil { routesWall = host }
+        }
+        animateRouteLayout(sorted, to: slots)
     }
 
     private func addSegmentDrag(wall: GymArea, in size: CGSize, fromStart: Bool) -> some Gesture {
@@ -1416,7 +1497,7 @@ struct GymMapView: View {
                     ClimberIdentity.name = value
                 }
 
-            Text("Routes ease into place on the wall. Merge pulls nearby walls into one ring.")
+            Text("Drag two grade tags together to merge them into a ring. They ease into place.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1531,7 +1612,7 @@ struct GymMapView: View {
             wall: area,
             updatedBy: name,
             updatedAt: .now,
-            groupKey: area.id.uuidString
+            groupKey: nil
         )
         context.insert(route)
         animateRouteLayout(existing + [route], to: slots)
@@ -1542,13 +1623,17 @@ struct GymMapView: View {
         let peers = wallsOnFloor.filter {
             $0.id != area.id && $0.displayZone == area.displayZone
         }
+        let key = UUID().uuidString
         var absorbed: [GymRoute] = []
         for peer in peers {
             for route in peer.routes {
                 route.wall = area
-                route.groupKey = area.id.uuidString
+                route.groupKey = key
                 absorbed.append(route)
             }
+        }
+        for route in area.routes {
+            route.groupKey = key
         }
         guard absorbed.isEmpty == false || area.routes.count > 1 else { return }
         let outlines = ([area] + peers).map { $0.floorPlanPoints() }
@@ -1567,6 +1652,10 @@ struct GymMapView: View {
             persistMap()
             return
         }
+        let key = UUID().uuidString
+        for route in routes {
+            route.groupKey = key
+        }
         let points = area.floorPlanPoints()
         let slots = preferRing
             ? FloorPlanMath.layoutRoutesMerged(count: routes.count, on: points, closed: area.shapeClosed)
@@ -1584,7 +1673,6 @@ struct GymMapView: View {
             let delay = Double(index) * 0.045
             withAnimation(Self.routeSpring.delay(delay)) {
                 route.setPin(x: target.x, y: target.y)
-                route.groupKey = route.wall?.id.uuidString ?? route.groupKey
             }
         }
         let settle = 0.48 + Double(max(routes.count - 1, 0)) * 0.045 + 0.12
