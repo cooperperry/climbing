@@ -203,6 +203,85 @@ public enum FloorPlanMath {
         return bestIndex
     }
 
+    /// Closest point on a wall outline. Routes lock to this so they stay on the wall.
+    public static func closestPoint(on points: [PlanPoint], closed: Bool, to target: PlanPoint) -> PlanPoint {
+        let count = segmentCount(points: points, closed: closed)
+        guard count > 0 else { return points.first ?? target }
+        var best = points[0]
+        var bestDist = Double.greatestFiniteMagnitude
+        for index in 0 ..< count {
+            guard let (start, end) = segmentEndpoints(points: points, closed: closed, index: index) else { continue }
+            let candidate = projectedPoint(from: start, to: end, of: target)
+            let dist = distance(candidate, target)
+            if dist < bestDist {
+                bestDist = dist
+                best = candidate
+            }
+        }
+        return best
+    }
+
+    /// A spot on the wall clear of pins that are already there. Existing pins are not moved.
+    public static func nextRouteOnWall(
+        points: [PlanPoint],
+        closed: Bool,
+        existing: [PlanPoint]
+    ) -> PlanPoint {
+        guard points.count >= 2 else { return points.first ?? PlanPoint(x: 0.5, y: 0.5) }
+        let samples = 64
+        var best = pointAlong(points: points, closed: closed, t: 0.5)
+        var bestClearance = -1.0
+        for index in 0 ..< samples {
+            let t = (Double(index) + 0.5) / Double(samples)
+            let candidate = pointAlong(points: points, closed: closed, t: t)
+            let clearance = existing.map { distance($0, candidate) }.min() ?? 1
+            if clearance > bestClearance {
+                bestClearance = clearance
+                best = candidate
+            }
+        }
+        return best
+    }
+
+    public static func projectedPoint(from start: PlanPoint, to end: PlanPoint, of point: PlanPoint) -> PlanPoint {
+        let abx = end.x - start.x
+        let aby = end.y - start.y
+        let lengthSquared = abx * abx + aby * aby
+        let t: Double
+        if lengthSquared <= 1e-12 {
+            t = 0
+        } else {
+            t = min(1, max(0, ((point.x - start.x) * abx + (point.y - start.y) * aby) / lengthSquared))
+        }
+        return PlanPoint(x: start.x + t * abx, y: start.y + t * aby)
+    }
+
+    /// Drop points that sit close to the line between their neighbors.
+    public static func simplify(_ points: [PlanPoint], tolerance: Double) -> [PlanPoint] {
+        guard points.count > 2, tolerance > 0 else { return points }
+        return douglasPeucker(points, tolerance: tolerance)
+    }
+
+    private static func douglasPeucker(_ points: [PlanPoint], tolerance: Double) -> [PlanPoint] {
+        guard points.count > 2 else { return points }
+        var maxDistance = 0.0
+        var index = 0
+        let last = points.count - 1
+        for cursor in 1 ..< last {
+            let distance = sqrt(distanceSquared(from: points[cursor], toSegmentFrom: points[0], to: points[last]))
+            if distance > maxDistance {
+                maxDistance = distance
+                index = cursor
+            }
+        }
+        if maxDistance > tolerance {
+            let left = douglasPeucker(Array(points[0 ... index]), tolerance: tolerance)
+            let right = douglasPeucker(Array(points[index ... last]), tolerance: tolerance)
+            return left.dropLast() + right
+        }
+        return [points[0], points[last]]
+    }
+
     /// Result of deleting one edge from a wall outline.
     public enum SegmentRemoval: Equatable, Sendable {
         /// Nothing left — delete the wall.

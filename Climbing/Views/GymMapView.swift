@@ -81,6 +81,7 @@ struct GymMapView: View {
     @State private var showMapSettings = false
     @State private var showWallList = false
     @State private var showUnlockFloor = false
+    @State private var traceMessage: String?
     @State private var didCenterMap = false
 
     private var scale: CustomGradeScale? {
@@ -407,6 +408,14 @@ struct GymMapView: View {
         } message: {
             Text("Walls can be moved and deleted again. Routes stay where they are.")
         }
+        .alert("Floor plan", isPresented: Binding(
+            get: { traceMessage != nil },
+            set: { if $0 == false { traceMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { traceMessage = nil }
+        } message: {
+            Text(traceMessage ?? "")
+        }
     }
 
     private var wallListSheet: some View {
@@ -532,6 +541,11 @@ struct GymMapView: View {
                         persistMap()
                     }
                     .font(.caption)
+                    Button("Build walls from sketch") {
+                        buildWallsFromSketch()
+                    }
+                    .font(.caption.bold())
+                    .disabled(floorIsLocked)
                 }
             }
             if gym.mapImageData != nil {
@@ -1023,8 +1037,9 @@ struct GymMapView: View {
                 }
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
+                let placed = lockToWall(tip, route: route)
                 withTransaction(transaction) {
-                    route.setPin(x: tip.x, y: tip.y)
+                    route.setPin(x: placed.x, y: placed.y)
                 }
             }
             .onEnded { _ in
@@ -1077,6 +1092,33 @@ struct GymMapView: View {
             guard let mate = routeOnFloor(id: id) else { continue }
             mate.setPin(x: origin.x + dx, y: origin.y + dy)
         }
+    }
+
+    /// Keep a loose pin on its wall. A merge still wins when another pin is the target.
+    private func lockToWall(_ tip: PlanPoint, route: GymRoute) -> PlanPoint {
+        guard mergeTargetRouteID == nil, let wall = route.wall else { return tip }
+        let points = wall.floorPlanPoints()
+        guard points.count >= 2 else { return tip }
+        return FloorPlanMath.closestPoint(on: points, closed: wall.shapeClosed, to: tip)
+    }
+
+    private func buildWallsFromSketch() {
+        guard floorIsLocked == false else { return }
+        guard let data = gym.mapImageData, let image = UIImage(data: data) else { return }
+        let viewSize = canvasSize == .zero ? CGSize(width: 390, height: 700) : canvasSize
+        let lines = FloorPlanTrace.wallPolylines(from: image, fittedIn: viewSize)
+        guard lines.isEmpty == false else {
+            traceMessage = "No walls stood out in that image. Use a higher-contrast sketch, or trace the walls yourself."
+            return
+        }
+        for line in lines {
+            let closed = line.count >= 3 && FloorPlanMath.distance(line[0], line[line.count - 1]) < 0.04
+            createWall(points: line, closed: closed)
+        }
+        fitGymToScreen(in: viewSize)
+        traceMessage = lines.count == 1
+            ? "Added 1 wall from the sketch. Drag corners if a line needs a fix."
+            : "Added \(lines.count) walls from the sketch. Drag corners if a line needs a fix."
     }
 
     /// Clockwise angle that puts this pin's head on the circle around the shared tip.
@@ -1914,13 +1956,9 @@ struct GymMapView: View {
         let name = trimmedClimberName
         guard let grade = logGrade, GymJoinMath.isUsableName(name) else { return }
         ClimberIdentity.name = name
-        let anchor = FloorPlanMath.centroid(of: area.floorPlanPoints())
-        let step = Double(area.routes.count)
-        let angle = step * 1.15
-        let spot = PlanPoint(
-            x: anchor.x + cos(angle) * 0.045,
-            y: anchor.y + sin(angle) * 0.045
-        )
+        let points = area.floorPlanPoints()
+        let existing = area.routes.map { PlanPoint(x: $0.x, y: $0.y) }
+        let spot = FloorPlanMath.nextRouteOnWall(points: points, closed: area.shapeClosed, existing: existing)
         let route = GymRoute(
             grade: grade,
             colorName: draftColor.rawValue,

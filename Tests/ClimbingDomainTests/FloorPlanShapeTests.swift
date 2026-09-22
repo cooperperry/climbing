@@ -368,4 +368,40 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(ring.map(\.name), ["360 A", "360 B", "360 C", "360 D", "360 E", "360 F"])
         XCTAssertTrue(ring.allSatisfy { $0.points.count == 3 && $0.closed == false })
     }
+
+    func testClosestPointLocksOntoSegment() {
+        let wall = [
+            PlanPoint(x: 0.1, y: 0.4),
+            PlanPoint(x: 0.9, y: 0.4),
+        ]
+        let snapped = FloorPlanMath.closestPoint(on: wall, closed: false, to: PlanPoint(x: 0.5, y: 0.7))
+        XCTAssertEqual(snapped.x, 0.5, accuracy: 1e-6)
+        XCTAssertEqual(snapped.y, 0.4, accuracy: 1e-6)
+    }
+
+    func testNextRouteOnWallAvoidsExistingPin() {
+        let wall = [
+            PlanPoint(x: 0.0, y: 0.5),
+            PlanPoint(x: 1.0, y: 0.5),
+        ]
+        let spot = FloorPlanMath.nextRouteOnWall(
+            points: wall,
+            closed: false,
+            existing: [PlanPoint(x: 0.5, y: 0.5)]
+        )
+        XCTAssertEqual(spot.y, 0.5, accuracy: 1e-6)
+        XCTAssertGreaterThan(abs(spot.x - 0.5), 0.2)
+    }
+
+    func testSimplifyDropsColinearPoints() {
+        let line = [
+            PlanPoint(x: 0.0, y: 0.2),
+            PlanPoint(x: 0.5, y: 0.2),
+            PlanPoint(x: 1.0, y: 0.2),
+        ]
+        let simplified = FloorPlanMath.simplify(line, tolerance: 0.01)
+        XCTAssertEqual(simplified.count, 2)
+        XCTAssertEqual(simplified[0].x, 0, accuracy: 1e-9)
+        XCTAssertEqual(simplified[1].x, 1, accuracy: 1e-9)
+    }
 }
