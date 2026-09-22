@@ -57,6 +57,7 @@ struct GymMapView: View {
     /// When a drag starts on an existing wall, we edit it instead of drawing.
     @State private var dragEditsShape = false
     @State private var isEditingName = false
+    @State private var wallPendingDelete: GymArea?
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -74,9 +75,9 @@ struct GymMapView: View {
     private var hint: String {
         if selectedWall != nil {
             if selectedSegmentIndex != nil {
-                return "Trash removes that segment. Tap elsewhere on the shape for the whole wall."
+                return "Red trash on the edge deletes only that segment."
             }
-            return "Tap a segment to select it, then trash. Drag + to extend. Empty space draws."
+            return "Tap an edge to select a segment. Use Delete wall below for the whole shape."
         }
         switch mode {
         case .line:
@@ -164,6 +165,24 @@ struct GymMapView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .confirmationDialog(
+            "Delete this entire wall?",
+            isPresented: Binding(
+                get: { wallPendingDelete != nil },
+                set: { if $0 == false { wallPendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete wall", role: .destructive) {
+                if let wall = wallPendingDelete {
+                    wallPendingDelete = nil
+                    removeWall(wall)
+                }
+            }
+            Button("Cancel", role: .cancel) { wallPendingDelete = nil }
+        } message: {
+            Text("This removes the whole shape, not just one segment.")
+        }
     }
 
     @ViewBuilder
@@ -184,6 +203,16 @@ struct GymMapView: View {
                 Spacer(minLength: 4)
                 nameControl(for: wall)
             }
+
+            Button(role: .destructive) {
+                wallPendingDelete = wall
+            } label: {
+                Label("Delete wall", systemImage: "trash")
+                    .font(.caption.bold())
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
 
             if isEditingName {
                 TextField("Cave, 360 A…", text: $renameDraft)
@@ -391,7 +420,9 @@ struct GymMapView: View {
             )
         }
 
-        trashHandle(for: wall, in: size)
+        if selectedSegmentIndex != nil {
+            segmentTrashHandle(for: wall, in: size)
+        }
     }
 
     private func extendHandle(at tip: PlanPoint, in size: CGSize, wall: GymArea, fromStart: Bool) -> some View {
@@ -409,31 +440,33 @@ struct GymMapView: View {
         .gesture(addSegmentDrag(wall: wall, in: size, fromStart: fromStart))
     }
 
-    private func trashHandle(for wall: GymArea, in size: CGSize) -> some View {
+    /// Only shown when an edge is selected — never deletes the whole wall.
+    @ViewBuilder
+    private func segmentTrashHandle(for wall: GymArea, in size: CGSize) -> some View {
         let points = wall.floorPlanPoints()
-        let anchor: PlanPoint
         if let seg = selectedSegmentIndex,
            let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: seg) {
-            anchor = mid
-        } else {
-            anchor = FloorPlanMath.chromeAnchor(for: points)
-        }
-        return Button {
-            if selectedSegmentIndex != nil {
+            Button {
                 deleteSelectedSegment(on: wall)
-            } else {
-                removeWall(wall)
+            } label: {
+                VStack(spacing: 2) {
+                    Image(systemName: "trash.fill")
+                        .font(.body.bold())
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Color.red.opacity(0.92), in: Circle())
+                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                    Text("Segment")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.red.opacity(0.85), in: Capsule())
+                }
             }
-        } label: {
-            Image(systemName: "trash.fill")
-                .font(.body.bold())
-                .foregroundStyle(.white)
-                .frame(width: 34, height: 34)
-                .background(Color.red.opacity(0.92), in: Circle())
-                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+            .buttonStyle(.plain)
+            .position(pixel(mid, in: size))
         }
-        .buttonStyle(.plain)
-        .position(pixel(anchor, in: size))
     }
 
     private func vertexDrag(wall: GymArea, index: Int, in size: CGSize) -> some Gesture {
@@ -760,15 +793,12 @@ struct GymMapView: View {
     }
 
     private func nearTrash(of wall: GymArea, point: PlanPoint) -> Bool {
+        guard let seg = selectedSegmentIndex else { return false }
         let points = wall.floorPlanPoints()
-        let anchor: PlanPoint
-        if let seg = selectedSegmentIndex,
-           let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: seg) {
-            anchor = mid
-        } else {
-            anchor = FloorPlanMath.chromeAnchor(for: points)
+        guard let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: seg) else {
+            return false
         }
-        return FloorPlanMath.distance(anchor, point) < 0.06
+        return FloorPlanMath.distance(mid, point) < 0.07
     }
 
     private func normalized(_ location: CGPoint, in size: CGSize) -> PlanPoint {
