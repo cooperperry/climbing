@@ -207,4 +207,27 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(points.count, 4)
         XCTAssertEqual(FloorPlanMath.segmentCount(points: points, closed: false), 3)
     }
+
+    func testSnapToGridRoundsToStep() {
+        let raw = PlanPoint(x: 0.127, y: 0.373)
+        let snapped = FloorPlanMath.snapToGrid(raw)
+        XCTAssertEqual(snapped.x, 0.15, accuracy: 1e-9)
+        XCTAssertEqual(snapped.y, 0.35, accuracy: 1e-9)
+    }
+
+    func testSnapAngleLocksToHorizontal() {
+        let origin = PlanPoint(x: 0.3, y: 0.4)
+        let free = PlanPoint(x: 0.55, y: 0.43)
+        let snapped = FloorPlanMath.snapAngle(from: origin, to: free)
+        XCTAssertEqual(snapped.y, origin.y, accuracy: 1e-6)
+        XCTAssertGreaterThan(snapped.x, origin.x)
+    }
+
+    func testRing360TemplateHasSixWalls() {
+        let ring = FloorPlanTemplates.ring360()
+        XCTAssertEqual(ring.count, 6)
+        XCTAssertTrue(ring.allSatisfy { $0.zone == "360" })
+        XCTAssertEqual(ring.map(\.name), ["360 A", "360 B", "360 C", "360 D", "360 E", "360 F"])
+        XCTAssertTrue(ring.allSatisfy { $0.points.count == 3 && $0.closed == false })
+    }
 }

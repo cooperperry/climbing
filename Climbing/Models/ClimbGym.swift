@@ -14,6 +14,10 @@ final class ClimbGym {
     var mapImageData: Data?
     /// Wall you're on right now. Optional so gyms from before walls existed migrate.
     var currentWallName: String?
+    /// Opacity of the chalkboard / floor-plan underlay photo (0...1).
+    var underlayOpacity: Double = 0.4
+    /// Which floor is shown on the map editor.
+    var currentFloorName: String?
 
     @Relationship(deleteRule: .cascade, inverse: \GymArea.gym)
     var areas: [GymArea] = []
@@ -27,7 +31,9 @@ final class ClimbGym {
         joinCode: String = GymJoinMath.joinCode(),
         joinedAt: Date = .now,
         isCurrent: Bool = false,
-        mapImageData: Data? = nil
+        mapImageData: Data? = nil,
+        underlayOpacity: Double = 0.4,
+        currentFloorName: String? = "Main"
     ) {
         self.id = id
         self.name = name
@@ -36,5 +42,7 @@ final class ClimbGym {
         self.isCurrent = isCurrent
         self.mapImageData = mapImageData
         self.currentWallName = nil
+        self.underlayOpacity = underlayOpacity
+        self.currentFloorName = currentFloorName
     }
 }

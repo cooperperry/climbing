@@ -395,4 +395,127 @@ public enum FloorPlanMath {
         guard draft.count >= 2, let first = draft.first else { return false }
         return distance(end, first) < closeSnapDistance
     }
+
+    // MARK: - Snap / grid (big-gym editing)
+
+    public static let gridStep: Double = 0.05
+
+    public static func snapToGrid(_ point: PlanPoint, step: Double = gridStep) -> PlanPoint {
+        let s = max(step, 1e-6)
+        return PlanPoint(
+            x: (point.x / s).rounded() * s,
+            y: (point.y / s).rounded() * s
+        )
+    }
+
+    /// Snap the free end of a stroke to 0/45/90° relative to `origin`.
+    public static func snapAngle(from origin: PlanPoint, to point: PlanPoint) -> PlanPoint {
+        let dx = point.x - origin.x
+        let dy = point.y - origin.y
+        let len = hypot(dx, dy)
+        guard len > 1e-6 else { return point }
+        let angle = atan2(dy, dx)
+        let step = Double.pi / 4
+        let snapped = (angle / step).rounded() * step
+        return PlanPoint(x: origin.x + cos(snapped) * len, y: origin.y + sin(snapped) * len)
+    }
+
+    public static func snapToNearby(
+        _ point: PlanPoint,
+        candidates: [PlanPoint],
+        threshold: Double = 0.035
+    ) -> PlanPoint {
+        var best = point
+        var bestDist = threshold
+        for candidate in candidates {
+            let d = distance(point, candidate)
+            if d < bestDist {
+                bestDist = d
+                best = candidate
+            }
+        }
+        return best
+    }
+
+    public static func applySnaps(
+        _ point: PlanPoint,
+        origin: PlanPoint?,
+        otherPoints: [PlanPoint],
+        grid: Bool,
+        angle: Bool,
+        vertices: Bool
+    ) -> PlanPoint {
+        var result = point
+        if angle, let origin {
+            result = snapAngle(from: origin, to: result)
+        }
+        if grid {
+            result = snapToGrid(result)
+        }
+        if vertices {
+            result = snapToNearby(result, candidates: otherPoints)
+        }
+        return result
+    }
+
+    public static func defaultFloorName(_ raw: String?) -> String {
+        let name = optionalWallName(raw ?? "")
+        return name.isEmpty ? "Main" : name
+    }
+
+    public static func defaultZoneName(_ raw: String?) -> String {
+        let name = optionalWallName(raw ?? "")
+        return name.isEmpty ? "General" : name
+    }
+}
+
+/// Pre-built outlines for common gym map chunks.
+public enum FloorPlanTemplates {
+    public struct WallSpec: Equatable, Sendable {
+        public var name: String
+        public var points: [PlanPoint]
+        public var closed: Bool
+        public var zone: String
+        public var floor: String
+
+        public init(name: String, points: [PlanPoint], closed: Bool, zone: String, floor: String = "Main") {
+            self.name = name
+            self.points = points
+            self.closed = closed
+            self.zone = zone
+            self.floor = floor
+        }
+    }
+
+    /// Six open arcs around a center — chalkboard-style 360 A–F.
+    public static func ring360(center: PlanPoint = PlanPoint(x: 0.5, y: 0.5), radius: Double = 0.22) -> [WallSpec] {
+        let labels = ["360 A", "360 B", "360 C", "360 D", "360 E", "360 F"]
+        return labels.enumerated().map { index, name in
+            let start = Double(index) * (.pi * 2 / 6) - .pi / 2
+            let end = start + (.pi * 2 / 6) * 0.85
+            let a = PlanPoint(x: center.x + cos(start) * radius, y: center.y + sin(start) * radius)
+            let midAngle = (start + end) / 2
+            let b = PlanPoint(x: center.x + cos(midAngle) * radius, y: center.y + sin(midAngle) * radius)
+            let c = PlanPoint(x: center.x + cos(end) * radius, y: center.y + sin(end) * radius)
+            return WallSpec(name: name, points: [a, b, c], closed: false, zone: "360")
+        }
+    }
+
+    public static func caveBox(center: PlanPoint = PlanPoint(x: 0.22, y: 0.55)) -> WallSpec {
+        WallSpec(
+            name: "Cave",
+            points: FloorPlanMath.square(center: center, size: 0.2),
+            closed: true,
+            zone: "Cave"
+        )
+    }
+
+    public static func duplicated(
+        points: [PlanPoint],
+        closed: Bool,
+        dx: Double = 0.08,
+        dy: Double = 0.08
+    ) -> (points: [PlanPoint], closed: Bool) {
+        (FloorPlanMath.translate(points: points, dx: dx, dy: dy), closed)
+    }
 }

@@ -22,6 +22,12 @@ final class GymArea {
     /// When true, the polyline is drawn closed (square / polygon). Older walls default open.
     var shapeClosed: Bool = false
 
+    /// Zone grouping on the overhead map (Cave, 360, Center…). Empty = General.
+    var zoneName: String = ""
+
+    /// Floor / level name. Empty = Main.
+    var floorName: String = ""
+
     /// Today's problems on this photo. Cleared on a set reset; send logs stay.
     @Relationship(deleteRule: .cascade, inverse: \GymRoute.wall)
     var routes: [GymRoute] = []
@@ -34,7 +40,9 @@ final class GymArea {
         gym: ClimbGym? = nil,
         photoData: Data? = nil,
         shapePointsData: Data? = nil,
-        shapeClosed: Bool = false
+        shapeClosed: Bool = false,
+        zoneName: String = "",
+        floorName: String = ""
     ) {
         self.id = id
         self.name = name
@@ -45,7 +53,12 @@ final class GymArea {
         self.photoData = photoData
         self.shapePointsData = shapePointsData
         self.shapeClosed = shapeClosed
+        self.zoneName = zoneName
+        self.floorName = floorName
     }
+
+    var displayZone: String { FloorPlanMath.defaultZoneName(zoneName) }
+    var displayFloor: String { FloorPlanMath.defaultFloorName(floorName) }
 
     var shapePoints: [PlanPoint] {
         get { FloorPlanMath.decode(shapePointsData) }
