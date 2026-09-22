@@ -3,22 +3,7 @@ import SwiftUI
 import SwiftData
 import UIKit
 
-private enum MapWorkspace: String, CaseIterable, Identifiable {
-    case routes
-    case buildMap
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .routes: "Routes"
-        case .buildMap: "Build map"
-        }
-    }
-}
-
-private enum BuildTool: String, CaseIterable, Identifiable {
-    case pan
+private enum BuildTool: String, Identifiable {
     case line
     case square
     case polygon
@@ -27,7 +12,6 @@ private enum BuildTool: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .pan: "Pan"
         case .line: "Line"
         case .square: "Square"
         case .polygon: "Polygon"
@@ -36,7 +20,6 @@ private enum BuildTool: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .pan: "hand.draw"
         case .line: "line.diagonal"
         case .square: "square"
         case .polygon: "pentagon"
@@ -59,8 +42,7 @@ struct GymMapView: View {
     @Query(sort: \ClimbGym.joinedAt)
     private var gyms: [ClimbGym]
 
-    @State private var workspace: MapWorkspace = .routes
-    @State private var buildTool: BuildTool = .pan
+    @State private var drawTool: BuildTool?
     @State private var editEdges = false
     @State private var snapGrid = false
     @State private var snapAngle = false
@@ -91,6 +73,8 @@ struct GymMapView: View {
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var showAddFloor = false
     @State private var newFloorDraft = ""
+    @State private var showMapSettings = false
+    @State private var showWallList = false
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -128,87 +112,110 @@ struct GymMapView: View {
         climberName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var allowsZoomPan: Bool {
-        workspace == .routes || buildTool == .pan
-    }
-
     private var effectiveZoom: CGFloat {
         min(4, max(0.5, zoomScale * pinchScale))
     }
 
-    private var drawMode: BuildTool? {
-        guard workspace == .buildMap else { return nil }
-        switch buildTool {
-        case .pan: return nil
-        case .line, .square, .polygon: return buildTool
-        }
-    }
+    private var drawMode: BuildTool? { drawTool }
 
     private var hint: String {
-        if workspace == .routes {
-            return "Pinch to zoom, drag to pan. Tap a wall for routes."
+        if editEdges, selectedWall != nil {
+            return "Trash on an edge deletes that segment. Tap Done editing when finished."
         }
-        if selectedWall != nil, editEdges {
-            return "Trash on an edge deletes that segment. Turn off Edit edges to move the whole wall."
+        if let tool = drawTool {
+            switch tool {
+            case .line:
+                return "Drag to draw a wall."
+            case .square:
+                return "Drag to size a room."
+            case .polygon:
+                if polygonDraft.isEmpty {
+                    return "Drag each side of your polygon."
+                }
+                return "Drag the next side — near the start closes it, or tap Done."
+            }
         }
         if selectedWall != nil {
-            return "Drag the shape to move it. Turn on Edit edges to adjust vertices."
+            return "Drag the wall to move it, or tap Routes to update climbs."
         }
-        switch buildTool {
-        case .pan:
-            return "Drag empty space to pan. Pinch to zoom — or drag a wall to move it."
-        case .line:
-            return "Drag to draw a wall — or tap any shape to select it."
-        case .square:
-            return "Drag to size a room — or tap any shape to select it."
-        case .polygon:
-            if polygonDraft.isEmpty {
-                return "Drag sides for a polygon — or tap a shape to select it."
-            }
-            return "Drag the next side. Near the start closes it — or tap Done."
-        }
+        return "Pinch to zoom, drag to pan. Tap a wall to select it."
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Workspace", selection: $workspace) {
-                ForEach(MapWorkspace.allCases) { item in
-                    Text(item.title).tag(item)
+        ZStack(alignment: .bottom) {
+            floorPlan
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            VStack(spacing: 0) {
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
+                Spacer()
+            }
+            .allowsHitTesting(false)
+
+            VStack(spacing: 10) {
+                if editEdges {
+                    Button("Done editing") {
+                        editEdges = false
+                        applyRename(to: selectedWall)
+                        persistMap()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.stravaOrange)
+                }
+
+                if drawTool == .polygon, polygonDraft.count >= 2 {
+                    HStack {
+                        Button("Done") { finishPolygon(closed: polygonDraft.count >= 3) }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.stravaOrange)
+                        Button("Cancel", role: .cancel) {
+                            polygonDraft = []
+                            rubberBand = nil
+                            drawTool = nil
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                if let wall = selectedWall {
+                    selectedWallCard(wall)
                 }
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.top, 8)
-            .onChange(of: workspace) { _, newValue in
-                rubberBand = nil
-                polygonDraft = []
-                extendingWallID = nil
-                dragEditsShape = false
-                if newValue == .routes {
-                    editEdges = false
-                }
-            }
-
-            HStack(spacing: 0) {
-                zoneSidebar
-                floorPlan
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            if workspace == .buildMap {
-                buildChrome
-            } else {
-                routesChrome
-            }
+            .padding(.bottom, 8)
         }
         .navigationTitle(gym.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if workspace == .buildMap {
-                ToolbarItem(placement: .topBarTrailing) {
-                    templatesMenu
-                }
+            ToolbarItem(placement: .topBarTrailing) {
+                addShapesMenu
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showMapSettings = true
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("Map settings")
+            }
+        }
+        .sheet(isPresented: $showMapSettings) {
+            mapSettingsSheet
+        }
+        .sheet(isPresented: $showWallList) {
+            wallListSheet
+        }
+        .onChange(of: drawTool) { _, newTool in
+            rubberBand = nil
+            extendingWallID = nil
+            dragEditsShape = false
+            if newTool != .polygon { polygonDraft = [] }
+            if newTool != nil { editEdges = false }
         }
         .onAppear {
             prepareGrades()
@@ -281,68 +288,144 @@ struct GymMapView: View {
 
     // MARK: - Chrome
 
-    private var routesChrome: some View {
-        Text(hint)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-            .background(.bar)
+    private var addShapesMenu: some View {
+        Menu {
+            Button {
+                drawTool = .line
+            } label: {
+                Label(BuildTool.line.title, systemImage: BuildTool.line.systemImage)
+            }
+            Button {
+                drawTool = .square
+            } label: {
+                Label(BuildTool.square.title, systemImage: BuildTool.square.systemImage)
+            }
+            Button {
+                drawTool = .polygon
+            } label: {
+                Label(BuildTool.polygon.title, systemImage: BuildTool.polygon.systemImage)
+            }
+            Divider()
+            Button("360 A–F ring") { insertTemplateRing360() }
+            Button("Cave box") { insertTemplateCaveBox() }
+            Button("Duplicate selected") { duplicateSelectedWall() }
+                .disabled(selectedWall == nil)
+        } label: {
+            Image(systemName: "plus")
+        }
+        .accessibilityLabel("Add shape")
     }
 
-    private var buildChrome: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(hint)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Picker("Tool", selection: $buildTool) {
-                    ForEach(BuildTool.allCases) { item in
-                        Label(item.title, systemImage: item.systemImage).tag(item)
-                    }
+    private var mapSettingsSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Underlay") {
+                    underlayRow
                 }
-                .pickerStyle(.segmented)
-                .onChange(of: buildTool) { _, newTool in
-                    rubberBand = nil
-                    extendingWallID = nil
-                    dragEditsShape = false
-                    if newTool != .polygon { polygonDraft = [] }
+                Section("Floor") {
+                    floorPickerRow
                 }
-
-                Toggle("Edit edges", isOn: $editEdges)
-
-                HStack(spacing: 12) {
+                Section("Snap while drawing") {
                     Toggle("Grid", isOn: $snapGrid)
                     Toggle("Angle", isOn: $snapAngle)
                     Toggle("Vertices", isOn: $snapVertices)
                 }
-                .font(.caption)
-
-                floorPickerRow
-                underlayRow
-
-                if buildTool == .polygon, polygonDraft.count >= 2 {
-                    HStack {
-                        Button("Done") { finishPolygon(closed: polygonDraft.count >= 3) }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.stravaOrange)
-                        Button("Cancel", role: .cancel) {
-                            polygonDraft = []
-                            rubberBand = nil
-                        }
+                Section {
+                    Button("Reset zoom") {
+                        zoomScale = 1
+                        panOffset = .zero
+                        panAnchor = .zero
+                    }
+                    Button("Wall list by zone") {
+                        showMapSettings = false
+                        showWallList = true
                     }
                 }
-
-                if let wall = selectedWall {
-                    selectedWallBar(wall)
+            }
+            .navigationTitle("Map settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showMapSettings = false }
                 }
             }
-            .padding()
         }
-        .frame(maxHeight: 280)
-        .background(.bar)
+        .presentationDetents([.medium, .large])
+    }
+
+    private var wallListSheet: some View {
+        NavigationStack {
+            ScrollView {
+                wallListContent
+                    .padding()
+            }
+            .navigationTitle(currentFloorDisplay)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showWallList = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    @ViewBuilder
+    private func selectedWallCard(_ wall: GymArea) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Button("Routes") { openRoutes(for: wall) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.stravaOrange)
+
+                if editEdges {
+                    if wall.shapeClosed == false {
+                        if wall.floorPlanPoints().count >= 3 {
+                            Button("Close") { closeShape(wall) }
+                                .font(.caption.bold())
+                        }
+                        Button("Break") { breakSelectedWall() }
+                            .font(.caption.bold())
+                            .disabled(wall.floorPlanPoints().count < 2)
+                    }
+                } else {
+                    Button("Edit shape") {
+                        drawTool = nil
+                        editEdges = true
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Spacer(minLength: 0)
+                nameControl(for: wall)
+            }
+
+            if isEditingName {
+                TextField("Cave, 360 A…", text: $renameDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.done)
+                    .onSubmit {
+                        applyRename(to: wall)
+                        persistMap()
+                        isEditingName = false
+                    }
+                    .onChange(of: renameDraft) { _, value in
+                        wall.name = FloorPlanMath.optionalWallName(value)
+                        gym.currentWallName = wall.name.isEmpty ? nil : wall.name
+                    }
+            }
+
+            Button(role: .destructive) {
+                wallPendingDelete = wall
+            } label: {
+                Label("Delete wall", systemImage: "trash")
+                    .font(.caption.bold())
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(14)
+        .background(.bar, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 10)
     }
 
     private var floorPickerRow: some View {
@@ -399,120 +482,45 @@ struct GymMapView: View {
         }
     }
 
-    private var templatesMenu: some View {
-        Menu {
-            Button("360 A–F ring") { insertTemplateRing360() }
-            Button("Cave box") { insertTemplateCaveBox() }
-            Button("Duplicate selected") { duplicateSelectedWall() }
-                .disabled(selectedWall == nil)
-        } label: {
-            Label("Templates", systemImage: "square.on.square")
-        }
-    }
-
-    private var zoneSidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(currentFloorDisplay)
-                    .font(.caption.bold())
+    private var wallListContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if wallsByZone.isEmpty {
+                Text("No walls on this floor.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                if wallsByZone.isEmpty {
-                    Text("No walls on this floor.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else {
-                    ForEach(wallsByZone, id: \.zone) { group in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(group.zone)
-                                .font(.caption2.bold())
-                                .foregroundStyle(.secondary)
-                            ForEach(group.walls) { wall in
-                                Button {
-                                    selectWall(wall)
-                                } label: {
-                                    HStack {
-                                        Text(FloorPlanMath.displayWallName(wall.name))
-                                            .font(.caption)
-                                            .lineLimit(2)
-                                            .multilineTextAlignment(.leading)
-                                        Spacer(minLength: 0)
-                                    }
-                                    .padding(.vertical, 4)
-                                    .padding(.horizontal, 6)
-                                    .background(
-                                        selectedWall?.id == wall.id
-                                            ? Color.stravaOrange.opacity(0.25)
-                                            : Color.primary.opacity(0.06),
-                                        in: RoundedRectangle(cornerRadius: 6)
-                                    )
+            } else {
+                ForEach(wallsByZone, id: \.zone) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(group.zone)
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        ForEach(group.walls) { wall in
+                            Button {
+                                selectWall(wall)
+                                showWallList = false
+                            } label: {
+                                HStack {
+                                    Text(FloorPlanMath.displayWallName(wall.name))
+                                        .font(.subheadline)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer(minLength: 0)
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 10)
+                                .background(
+                                    selectedWall?.id == wall.id
+                                        ? Color.stravaOrange.opacity(0.2)
+                                        : Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
             }
-            .padding(10)
         }
-        .frame(width: 118)
-        .background(.bar)
-    }
-
-    @ViewBuilder
-    private func selectedWallBar(_ wall: GymArea) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                if editEdges, wall.shapeClosed == false {
-                    if wall.floorPlanPoints().count >= 3 {
-                        Button("Close") { closeShape(wall) }
-                            .font(.caption.bold())
-                    }
-                    Button("Break") { breakSelectedWall() }
-                        .font(.caption.bold())
-                        .disabled(wall.floorPlanPoints().count < 2)
-                }
-                if workspace == .buildMap {
-                    Button("Routes") { openRoutes(for: wall) }
-                        .font(.caption.bold())
-                }
-                Spacer(minLength: 4)
-                nameControl(for: wall)
-            }
-
-            TextField("Zone (Cave, 360…)", text: $zoneDraft)
-                .textFieldStyle(.roundedBorder)
-                .font(.caption)
-                .onChange(of: zoneDraft) { _, value in
-                    wall.zoneName = FloorPlanMath.optionalWallName(value)
-                }
-                .onSubmit { persistMap() }
-
-            Button(role: .destructive) {
-                wallPendingDelete = wall
-            } label: {
-                Label("Delete wall", systemImage: "trash")
-                    .font(.caption.bold())
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .tint(.red)
-
-            if isEditingName {
-                TextField("Cave, 360 A…", text: $renameDraft)
-                    .textFieldStyle(.roundedBorder)
-                    .submitLabel(.done)
-                    .onSubmit {
-                        applyRename(to: wall)
-                        persistMap()
-                        isEditingName = false
-                    }
-                    .onChange(of: renameDraft) { _, value in
-                        wall.name = FloorPlanMath.optionalWallName(value)
-                        gym.currentWallName = wall.name.isEmpty ? nil : wall.name
-                    }
-            }
-        }
-        .padding(.top, 2)
     }
 
     @ViewBuilder
@@ -558,14 +566,14 @@ struct GymMapView: View {
                         .allowsHitTesting(false)
                 }
 
-                if snapGrid, workspace == .buildMap {
+                if snapGrid {
                     gridOverlay(in: size)
                 }
 
                 if wallsOnFloor.isEmpty && polygonDraft.isEmpty && rubberBand == nil {
-                    Text(workspace == .routes
-                        ? "Tap a wall for routes,\nor switch to Build map."
-                        : "Drag a Line, Square, or Polygon\nto map your gym.")
+                    Text(drawTool == nil
+                        ? "Tap + to add walls,\nor trace your gym from a photo."
+                        : "Drag on the map to draw.")
                         .font(.subheadline.bold())
                         .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
@@ -582,7 +590,7 @@ struct GymMapView: View {
                     nameTag(wall, in: size)
                 }
 
-                if workspace == .buildMap, editEdges, let wall = selectedWall {
+                if editEdges, let wall = selectedWall {
                     editHandles(for: wall, in: size)
                 }
             }
@@ -643,8 +651,6 @@ struct GymMapView: View {
                     path.addLine(to: pixel(band.current, in: size))
                 }
                 .stroke(Color.stravaOrange, style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [6, 4]))
-            case .pan:
-                EmptyView()
             }
         }
 
@@ -771,11 +777,9 @@ struct GymMapView: View {
     private var zoomGesture: some Gesture {
         MagnificationGesture()
             .updating($pinchScale) { value, state, _ in
-                guard allowsZoomPan else { return }
                 state = value
             }
             .onEnded { value in
-                guard allowsZoomPan else { return }
                 zoomScale = min(4, max(0.5, zoomScale * value))
             }
     }
@@ -837,22 +841,10 @@ struct GymMapView: View {
     private func canvasGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if workspace == .routes {
-                    if allowsZoomPan {
-                        panOffset = CGSize(
-                            width: panAnchor.width + value.translation.width,
-                            height: panAnchor.height + value.translation.height
-                        )
-                    }
-                    return
-                }
-
-                if buildTool == .pan, allowsZoomPan {
+                if drawTool == nil {
                     let start = normalized(value.startLocation, in: size)
                     if shapeDragOrigin == nil && rubberBand == nil && dragEditsShape == false {
-                        if hitTest(start) != nil {
-                            // fall through to shape move
-                        } else {
+                        if hitTest(start) == nil {
                             panOffset = CGSize(
                                 width: panAnchor.width + value.translation.width,
                                 height: panAnchor.height + value.translation.height
@@ -926,8 +918,6 @@ struct GymMapView: View {
                     let from = polygonDraft.last ?? start
                     let current = applySnaps(to: point, origin: from, excluding: nil)
                     rubberBand = RubberBand(start: from, current: current)
-                case .pan:
-                    break
                 }
             }
             .onEnded { value in
@@ -935,16 +925,9 @@ struct GymMapView: View {
                 let end = normalized(value.location, in: size)
                 let start = normalized(value.startLocation, in: size)
                 let wasEditing = dragEditsShape
+                let browsing = drawTool == nil
 
-                if workspace == .routes {
-                    panAnchor = panOffset
-                    if moved == false {
-                        handleRoutesTap(at: end)
-                    }
-                    return
-                }
-
-                if buildTool == .pan, allowsZoomPan, wasEditing == false, shapeDragOrigin == nil, rubberBand == nil {
+                if browsing, wasEditing == false, shapeDragOrigin == nil, rubberBand == nil {
                     let pannedEmpty = hitTest(start) == nil
                     if pannedEmpty, moved {
                         panAnchor = panOffset
@@ -962,6 +945,8 @@ struct GymMapView: View {
                     if moved {
                         applyRename(to: selectedWall)
                         persistMap()
+                    } else if browsing {
+                        handleBrowseTap(at: end)
                     } else {
                         handleSelectTap(at: end)
                     }
@@ -969,8 +954,9 @@ struct GymMapView: View {
                 }
 
                 guard let mode = drawMode else {
-                    if buildTool == .pan, moved == false {
-                        handleSelectTap(at: end)
+                    panAnchor = panOffset
+                    if moved == false {
+                        handleBrowseTap(at: end)
                     }
                     return
                 }
@@ -1000,8 +986,6 @@ struct GymMapView: View {
                         return
                     }
                     commitPolygonDrag(start: start, end: end, moved: moved)
-                case .pan:
-                    if moved == false { handleSelectTap(at: end) }
                 }
             }
     }
@@ -1047,14 +1031,23 @@ struct GymMapView: View {
         polygonDraft.append(snappedEnd)
     }
 
-    private func handleRoutesTap(at point: PlanPoint) {
+    private func handleBrowseTap(at point: PlanPoint) {
         if let hit = hitTest(point) {
-            openRoutes(for: hit)
+            if selectedWall?.id == hit.id {
+                openRoutes(for: hit)
+            } else {
+                selectWall(hit)
+            }
+        } else {
+            applyRename(to: selectedWall)
+            selectedWall = nil
+            renameDraft = ""
+            zoneDraft = ""
         }
     }
 
     private func handleSelectTap(at point: PlanPoint) {
-        if workspace == .buildMap, editEdges, let wall = selectedWall {
+        if editEdges, let wall = selectedWall {
             let pts = wall.floorPlanPoints()
             if let next = FloorPlanMath.insertingVertex(in: pts, closed: wall.shapeClosed, at: point) {
                 wall.setFloorPlanPoints(next)
@@ -1128,6 +1121,7 @@ struct GymMapView: View {
         renameDraft = name
         zoneDraft = zone
         isEditingName = false
+        drawTool = nil
         persistMap()
     }
 
@@ -1135,6 +1129,7 @@ struct GymMapView: View {
         let points = polygonDraft
         polygonDraft = []
         rubberBand = nil
+        drawTool = nil
         let needs = closed ? 3 : 2
         guard points.count >= needs else { return }
         createWall(points: points, closed: closed && points.count >= 3)
