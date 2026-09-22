@@ -137,6 +137,7 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
     }
 
     func publishSnapshot() {
+        guard let session, session.activationState == .activated, session.isWatchAppInstalled else { return }
         guard let context, let data = try? JSONEncoder().encode(makeSnapshot(in: context)) else { return }
         let gymData = (try? JSONEncoder().encode(gymContext(in: context))) ?? Data()
         let contextMessage: [String: Any] = [
@@ -145,13 +146,13 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             WatchSync.lifetimeGain: lifetimeGain(in: context),
             WatchSync.gym: gymData,
         ]
-        try? session?.updateApplicationContext(contextMessage)
-        guard session?.isReachable == true else { return }
+        try? session.updateApplicationContext(contextMessage)
+        guard session.isReachable else { return }
         var live = contextMessage
         if let photos = try? JSONEncoder().encode(wallPhotos(in: context)) {
             live[WatchSync.wallPhotos] = photos
         }
-        session?.sendMessage(
+        session.sendMessage(
             live,
             replyHandler: { _ in },
             errorHandler: { _ in }

@@ -1,31 +1,34 @@
 import SwiftUI
 import SwiftData
 
-private enum FloorPlanTool: String, CaseIterable, Identifiable {
-    case routes
-    case move
-    case editShape
+private enum MapMode: String, CaseIterable, Identifiable {
+    case select
+    case line
+    case square
+    case polygon
 
     var id: String { rawValue }
 
-    var label: String {
+    var title: String {
         switch self {
-        case .routes: "Routes"
-        case .move: "Move"
-        case .editShape: "Shape"
+        case .select: "Select"
+        case .line: "Line"
+        case .square: "Square"
+        case .polygon: "Polygon"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .routes: "list.bullet"
-        case .move: "arrow.up.and.down.and.arrow.left.and.right"
-        case .editShape: "line.diagonal"
+        case .select: "hand.tap"
+        case .line: "line.diagonal"
+        case .square: "square"
+        case .polygon: "pentagon"
         }
     }
 }
 
-/// Overhead floor plan of a gym: wall segments you draw and drag, plus routes on each wall.
+/// Overhead floor plan: draw walls as lines, squares, or polygons, then set routes.
 struct GymMapView: View {
     @Bindable var gym: ClimbGym
     @Environment(\.modelContext) private var context
@@ -35,18 +38,25 @@ struct GymMapView: View {
     @Query(sort: \ClimbGym.joinedAt)
     private var gyms: [ClimbGym]
 
-    @State private var selectedArea: GymArea?
-    @State private var shapeFocusArea: GymArea?
+    @State private var mode: MapMode = .select
+    @State private var selectedWall: GymArea?
+    @State private var routesWall: GymArea?
+    @State private var wallNameDraft = ""
+    @State private var namingPending: PendingShape?
+    @State private var polygonDraft: [PlanPoint] = []
+    @State private var lineStart: PlanPoint?
+    @State private var shapeDragOrigin: [PlanPoint]?
+    @State private var canvasSize: CGSize = .zero
     @State private var climberName = ClimberIdentity.name
-    @State private var showingAddWall = false
-    @State private var wallName = ""
     @State private var logDiscipline: ClimbDiscipline = .boulder
     @State private var logGrade: String?
     @State private var draftColor: HoldColor = .blue
-    @State private var dragOrigin: [UUID: CGPoint] = [:]
-    @State private var shapeDragOrigin: [UUID: [PlanPoint]] = [:]
-    @State private var canvasSize: CGSize = CGSize(width: 320, height: 340)
-    @State private var floorTool: FloorPlanTool = .routes
+
+    private struct PendingShape {
+        var points: [PlanPoint]
+        var closed: Bool
+        var suggestedName: String
+    }
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -61,41 +71,70 @@ struct GymMapView: View {
         climberName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Draw wall lines, drag corners to reshape, tap a label for routes.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            TextField("Your name on updates", text: $climberName)
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: climberName) { _, value in
-                    ClimberIdentity.name = value
+    private var hint: String {
+        switch mode {
+        case .select:
+            if let wall = selectedWall {
+                if wall.shapeClosed {
+                    return "\(wall.name) — drag corners, or tap an edge to add one."
                 }
-
-            Picker("Tool", selection: $floorTool) {
-                ForEach(FloorPlanTool.allCases) { tool in
-                    Label(tool.label, systemImage: tool.systemImage).tag(tool)
-                }
+                return "\(wall.name) — drag corners, tap edge to bend, Extend / Break below."
             }
-            .pickerStyle(.segmented)
-
-            if floorTool == .editShape, let focus = shapeFocusArea {
-                shapeToolbar(for: focus)
+            return "Tap a wall to select. Tap again for routes."
+        case .line:
+            return lineStart == nil ? "Tap where the line starts." : "Tap the other end of the line."
+        case .square:
+            return "Tap the center of a new square wall."
+        case .polygon:
+            if polygonDraft.isEmpty {
+                return "Tap corners to draw a polygon."
             }
-
-            floorPlan
-                .frame(maxWidth: .infinity)
-                .frame(height: 340)
+            return "Tap to add a corner. Tap Close shape when done."
         }
-        .padding()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            floorPlan
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Picker("Mode", selection: $mode) {
+                    ForEach(MapMode.allCases) { item in
+                        Label(item.title, systemImage: item.systemImage).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: mode) { _, newMode in
+                    lineStart = nil
+                    if newMode != .polygon { polygonDraft = [] }
+                    if newMode != .select { selectedWall = nil }
+                }
+
+                if mode == .polygon, polygonDraft.isEmpty == false {
+                    HStack {
+                        Button("Close shape") { finishPolygon() }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.stravaOrange)
+                            .disabled(polygonDraft.count < 3)
+                        Button("Cancel", role: .cancel) { polygonDraft = [] }
+                    }
+                }
+
+                if let wall = selectedWall, mode == .select {
+                    selectedWallBar(wall)
+                }
+            }
+            .padding()
+            .background(.bar)
+        }
         .navigationTitle(gym.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Add wall", systemImage: "plus") { showingAddWall = true }
-            }
-        }
         .onAppear {
             prepareGrades()
             climberName = ClimberIdentity.name
@@ -103,17 +142,20 @@ struct GymMapView: View {
         .onChange(of: logDiscipline) { _, _ in
             logGrade = scale?.grades.first
         }
-        .onChange(of: floorTool) { _, tool in
-            if tool != .editShape { shapeFocusArea = nil }
-        }
-        .alert("Add a wall", isPresented: $showingAddWall) {
-            TextField("Cave, Center, 360 A…", text: $wallName)
-            Button("Add") { addWall() }
-            Button("Cancel", role: .cancel) { wallName = "" }
+        .alert("Name this wall", isPresented: Binding(
+            get: { namingPending != nil },
+            set: { if $0 == false { namingPending = nil; wallNameDraft = "" } }
+        )) {
+            TextField("Cave, 360 A, Center…", text: $wallNameDraft)
+            Button("Add") { commitPendingWall() }
+            Button("Cancel", role: .cancel) {
+                namingPending = nil
+                wallNameDraft = ""
+            }
         } message: {
-            Text("Name a section, then drag its line into place on the floor plan.")
+            Text("Give this section a short name from the gym floor plan.")
         }
-        .sheet(item: $selectedArea) { area in
+        .sheet(item: $routesWall) { area in
             NavigationStack {
                 ScrollView {
                     routeList(for: area)
@@ -123,7 +165,7 @@ struct GymMapView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { selectedArea = nil }
+                        Button("Done") { routesWall = nil }
                     }
                 }
             }
@@ -132,254 +174,361 @@ struct GymMapView: View {
     }
 
     @ViewBuilder
-    private func shapeToolbar(for area: GymArea) -> some View {
+    private func selectedWallBar(_ wall: GymArea) -> some View {
         HStack(spacing: 8) {
-            Text(area.name)
-                .font(.caption.bold())
+            Text(wall.name)
+                .font(.subheadline.bold())
                 .lineLimit(1)
-            Spacer()
-            Button("Extend line", systemImage: "plus") { extendShape(on: area) }
-                .font(.caption.bold())
-            Button("Done", systemImage: "checkmark") {
-                shapeFocusArea = nil
-                floorTool = .routes
+            Spacer(minLength: 4)
+            if wall.shapeClosed == false {
+                Button("Extend") { extendLine(wall) }
+                    .font(.caption.bold())
+                Button("Break") { breakSelectedWall() }
+                    .font(.caption.bold())
+                    .disabled(wall.floorPlanPoints().count < 2)
             }
-            .font(.caption.bold())
+            Button("Routes") { openRoutes(for: wall) }
+                .font(.caption.bold())
+            Button("Delete", role: .destructive) { removeWall(wall) }
+                .font(.caption.bold())
         }
+        .padding(.top, 2)
     }
 
     private var floorPlan: some View {
         GeometryReader { geo in
             let size = geo.size
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.black)
+            ZStack {
+                Color.black
 
-                if walls.isEmpty {
-                    Text("Tap + and add Cave, Center, 360…")
+                if walls.isEmpty && polygonDraft.isEmpty && lineStart == nil {
+                    Text("Add a Line, Square, or Polygon\nto map your gym.")
                         .font(.subheadline.bold())
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding()
                 }
 
-                ForEach(walls) { area in
-                    wallSegment(area, in: size)
+                ForEach(walls) { wall in
+                    shapeLayer(wall, in: size)
                 }
 
-                ForEach(walls) { area in
-                    wallLabel(area, in: size)
+                if let start = lineStart {
+                    Circle()
+                        .fill(Color.stravaOrange)
+                        .frame(width: 14, height: 14)
+                        .position(pixel(start, in: size))
+                }
+
+                if polygonDraft.isEmpty == false {
+                    draftPolygon(in: size)
+                }
+
+                ForEach(walls) { wall in
+                    nameTag(wall, in: size)
                 }
             }
-            .coordinateSpace(name: "floor")
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(Rectangle())
+            .gesture(canvasGesture(in: size))
             .onAppear { canvasSize = size }
             .onChange(of: size.width) { _, _ in canvasSize = size }
             .onChange(of: size.height) { _, _ in canvasSize = size }
+            .clipShape(RoundedRectangle(cornerRadius: 0))
         }
     }
 
-    private func wallSegment(_ area: GymArea, in size: CGSize) -> some View {
-        let points = area.floorPlanPoints()
-        let focused = shapeFocusArea?.id == area.id
-        let stroke = focused ? Color.stravaOrange : Color.white.opacity(0.85)
-        return ZStack {
+    private func draftPolygon(in size: CGSize) -> some View {
+        ZStack {
             Path { path in
-                guard let first = points.first else { return }
-                let start = pixel(first, in: size)
-                path.move(to: start)
-                for pt in points.dropFirst() {
+                guard let first = polygonDraft.first else { return }
+                path.move(to: pixel(first, in: size))
+                for pt in polygonDraft.dropFirst() {
                     path.addLine(to: pixel(pt, in: size))
                 }
             }
-            .stroke(stroke, style: StrokeStyle(lineWidth: focused ? 5 : 3, lineCap: .round, lineJoin: .round))
+            .stroke(Color.stravaOrange, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
 
-            if floorTool == .editShape, focused {
+            ForEach(Array(polygonDraft.enumerated()), id: \.offset) { _, pt in
+                Circle()
+                    .fill(Color.stravaOrange)
+                    .frame(width: 12, height: 12)
+                    .position(pixel(pt, in: size))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func shapeLayer(_ wall: GymArea, in size: CGSize) -> some View {
+        let points = wall.floorPlanPoints()
+        let focused = selectedWall?.id == wall.id
+        let stroke = focused ? Color.stravaOrange : Color.white.opacity(0.9)
+        return ZStack {
+            Path { path in
+                guard let first = points.first else { return }
+                path.move(to: pixel(first, in: size))
+                for pt in points.dropFirst() {
+                    path.addLine(to: pixel(pt, in: size))
+                }
+                if wall.shapeClosed {
+                    path.closeSubpath()
+                }
+            }
+            .stroke(stroke, style: StrokeStyle(lineWidth: focused ? 4 : 2.5, lineCap: .round, lineJoin: .round))
+
+            if focused, mode == .select {
                 ForEach(Array(points.enumerated()), id: \.offset) { index, pt in
-                    vertexHandle(area: area, index: index, normalized: pt, in: size)
+                    vertexHandle(wall: wall, index: index, point: pt, in: size)
                 }
             }
         }
-        .contentShape(Path { path in
-            guard let first = points.first else { return }
-            path.move(to: pixel(first, in: size))
-            for pt in points.dropFirst() {
-                path.addLine(to: pixel(pt, in: size))
-            }
-        })
-        .gesture(segmentDragGesture(area: area, points: points))
+        .allowsHitTesting(false)
     }
 
-    private func vertexHandle(area: GymArea, index: Int, normalized: PlanPoint, in size: CGSize) -> some View {
-        let pos = pixel(normalized, in: size)
-        return Circle()
+    private func nameTag(_ wall: GymArea, in size: CGSize) -> some View {
+        let center = FloorPlanMath.centroid(of: wall.floorPlanPoints())
+        let focused = selectedWall?.id == wall.id
+        return Text(wall.name)
+            .font(.caption2.bold())
+            .foregroundStyle(focused ? Color.black : Color.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(focused ? Color.stravaOrange : Color.white.opacity(0.18), in: Capsule())
+            .position(x: center.x * size.width, y: max(14, center.y * size.height - 18))
+            .allowsHitTesting(false)
+    }
+
+    private func vertexHandle(wall: GymArea, index: Int, point: PlanPoint, in size: CGSize) -> some View {
+        Circle()
             .fill(Color.stravaOrange)
-            .frame(width: 22, height: 22)
+            .frame(width: 20, height: 20)
             .overlay { Circle().strokeBorder(Color.white, lineWidth: 2) }
-            .position(pos)
+            .position(pixel(point, in: size))
             .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .named("floor"))
+                DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        var pts = resolvedStoredPoints(for: area)
+                        var pts = wall.floorPlanPoints()
                         guard index < pts.count else { return }
                         let board = canvasSize == .zero ? size : canvasSize
-                        let nx = value.location.x / max(board.width, 1)
-                        let ny = value.location.y / max(board.height, 1)
-                        let clamped = GymJoinMath.clampPin(x: nx, y: ny)
+                        let clamped = GymJoinMath.clampPin(
+                            x: value.location.x / max(board.width, 1),
+                            y: value.location.y / max(board.height, 1)
+                        )
                         pts[index] = PlanPoint(x: clamped.x, y: clamped.y)
-                        area.setFloorPlanPoints(pts)
+                        wall.setFloorPlanPoints(pts)
                     }
-                    .onEnded { _ in
-                        persistMap()
-                    }
+                    .onEnded { _ in persistMap() }
             )
     }
 
-    private func segmentDragGesture(area: GymArea, points: [PlanPoint]) -> some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("floor"))
+    private func canvasGesture(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0)
             .onChanged { value in
-                guard floorTool == .move || (floorTool == .editShape && shapeFocusArea?.id == area.id) else { return }
-                let originKey = area.id
-                if shapeDragOrigin[originKey] == nil {
-                    shapeDragOrigin[originKey] = resolvedStoredPoints(for: area)
+                guard mode == .select, let wall = selectedWall else { return }
+                // Whole-shape drag only when not near a vertex (vertex handles own their drag).
+                let point = normalized(value.location, in: size)
+                if nearVertex(of: wall, point: point) { return }
+                if shapeDragOrigin == nil {
+                    shapeDragOrigin = wall.floorPlanPoints()
                 }
-                guard let origin = shapeDragOrigin[originKey] else { return }
-                let board = canvasSize == .zero ? CGSize(width: 320, height: 340) : canvasSize
-                let dx = value.translation.width / max(board.width, 1)
-                let dy = value.translation.height / max(board.height, 1)
-                area.setFloorPlanPoints(FloorPlanMath.translate(points: origin, dx: dx, dy: dy))
+                guard let origin = shapeDragOrigin else { return }
+                let start = normalized(value.startLocation, in: size)
+                let dx = point.x - start.x
+                let dy = point.y - start.y
+                wall.setFloorPlanPoints(FloorPlanMath.translate(points: origin, dx: dx, dy: dy))
             }
             .onEnded { value in
-                shapeDragOrigin[area.id] = nil
-                let moved = hypot(value.translation.width, value.translation.height) >= 8
-                if floorTool == .move, moved == false {
-                    openRoutes(for: area)
-                } else if moved {
-                    persistMap()
-                } else if floorTool == .editShape {
-                    shapeFocusArea = area
+                let moved = hypot(value.translation.width, value.translation.height) >= 10
+                let point = normalized(value.location, in: size)
+                defer { shapeDragOrigin = nil }
+
+                if moved {
+                    if mode == .select, selectedWall != nil {
+                        persistMap()
+                    }
+                    return
                 }
+
+                handleTap(at: point)
             }
     }
 
-    private func wallLabel(_ area: GymArea, in size: CGSize) -> some View {
-        let center = FloorPlanMath.centroid(of: area.floorPlanPoints())
-        let selected = selectedArea?.id == area.id
-        let width = max(size.width, 1)
-        let height = max(size.height, 1)
-        return VStack(spacing: 2) {
-            Text(area.name)
-                .font(.caption.bold())
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-            Text(area.routes.count == 1 ? "1 route" : "\(area.routes.count) routes")
-                .font(.caption2)
-                .foregroundStyle(selected ? Color.black.opacity(0.7) : Color.white.opacity(0.7))
+    private func handleTap(at point: PlanPoint) {
+        switch mode {
+        case .select:
+            if let wall = selectedWall,
+               let next = FloorPlanMath.insertingVertex(in: wall.floorPlanPoints(), at: point) {
+                // Mid-edge tap on the selected shape inserts a bend / corner.
+                wall.setFloorPlanPoints(next)
+                persistMap()
+                return
+            }
+            if let hit = hitTest(point) {
+                if selectedWall?.id == hit.id {
+                    openRoutes(for: hit)
+                } else {
+                    selectedWall = hit
+                    gym.currentWallName = hit.name
+                    persistMap()
+                }
+            } else {
+                selectedWall = nil
+            }
+        case .line:
+            if let start = lineStart {
+                let points = [start, point]
+                lineStart = nil
+                namingPending = PendingShape(points: points, closed: false, suggestedName: nextDefaultName(prefix: "Wall"))
+                wallNameDraft = namingPending?.suggestedName ?? ""
+            } else {
+                lineStart = point
+            }
+        case .square:
+            let points = FloorPlanMath.square(center: point)
+            namingPending = PendingShape(points: points, closed: true, suggestedName: nextDefaultName(prefix: "Room"))
+            wallNameDraft = namingPending?.suggestedName ?? ""
+        case .polygon:
+            polygonDraft.append(point)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(minWidth: 72)
-        .background(selected ? Color.stravaOrange : Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
-        .foregroundStyle(selected ? Color.black : Color.white)
-        .fixedSize()
-        .position(x: center.x * width, y: center.y * height)
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .named("floor"))
-                .onChanged { value in
-                    guard floorTool == .move else { return }
-                    let origin = dragOrigin[area.id] ?? CGPoint(x: area.x, y: area.y)
-                    if dragOrigin[area.id] == nil {
-                        dragOrigin[area.id] = origin
-                        shapeDragOrigin[area.id] = resolvedStoredPoints(for: area)
-                    }
-                    let board = canvasSize == .zero ? size : canvasSize
-                    let dx = value.translation.width / max(board.width, 1)
-                    let dy = value.translation.height / max(board.height, 1)
-                    if let base = shapeDragOrigin[area.id] {
-                        area.setFloorPlanPoints(FloorPlanMath.translate(points: base, dx: dx, dy: dy))
-                    } else {
-                        let clamped = GymJoinMath.clampPin(x: origin.x + dx, y: origin.y + dy)
-                        area.x = clamped.x
-                        area.y = clamped.y
-                    }
-                }
-                .onEnded { value in
-                    dragOrigin[area.id] = nil
-                    shapeDragOrigin[area.id] = nil
-                    if floorTool == .move {
-                        if hypot(value.translation.width, value.translation.height) < 8 {
-                            openRoutes(for: area)
-                        } else {
-                            persistMap()
-                        }
-                    } else if floorTool == .routes {
-                        if hypot(value.translation.width, value.translation.height) < 8 {
-                            openRoutes(for: area)
-                        }
-                    } else if floorTool == .editShape {
-                        if hypot(value.translation.width, value.translation.height) < 8 {
-                            shapeFocusArea = area
-                        } else {
-                            persistMap()
-                        }
-                    }
-                }
+    }
+
+    private func finishPolygon() {
+        guard polygonDraft.count >= 3 else { return }
+        let points = polygonDraft
+        polygonDraft = []
+        namingPending = PendingShape(points: points, closed: true, suggestedName: nextDefaultName(prefix: "Zone"))
+        wallNameDraft = namingPending?.suggestedName ?? ""
+        mode = .select
+    }
+
+    private func breakSelectedWall() {
+        guard let wall = selectedWall, wall.shapeClosed == false else { return }
+        let points = wall.floorPlanPoints()
+        guard points.count >= 2 else { return }
+        let midIndex = max(0, (points.count - 1) / 2)
+        let a = points[midIndex]
+        let b = points[min(midIndex + 1, points.count - 1)]
+        let mid = FloorPlanMath.project(p: FloorPlanMath.centroid(of: [a, b]), ontoSegmentFrom: a, to: b)
+        guard let parts = FloorPlanMath.split(points: points, at: mid, maxDistance: 1) else { return }
+        wall.setFloorPlanPoints(parts.left)
+        let right = GymArea(
+            name: "\(wall.name) B",
+            x: FloorPlanMath.centroid(of: parts.right).x,
+            y: FloorPlanMath.centroid(of: parts.right).y,
+            gym: gym,
+            shapePointsData: FloorPlanMath.encode(parts.right),
+            shapeClosed: false
         )
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                switch floorTool {
-                case .routes:
-                    openRoutes(for: area)
-                case .editShape:
-                    shapeFocusArea = area
-                case .move:
-                    break
+        context.insert(right)
+        persistMap()
+        selectedWall = wall
+    }
+
+    private func extendLine(_ wall: GymArea) {
+        var pts = wall.floorPlanPoints()
+        pts.append(FloorPlanMath.extendedPoint(after: pts))
+        wall.setFloorPlanPoints(pts)
+        persistMap()
+    }
+
+    private func commitPendingWall() {
+        guard let pending = namingPending else { return }
+        let name = wallNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        namingPending = nil
+        wallNameDraft = ""
+        guard GymJoinMath.isUsableName(name) else { return }
+        let center = FloorPlanMath.centroid(of: pending.points)
+        let area = GymArea(
+            name: name,
+            x: center.x,
+            y: center.y,
+            gym: gym,
+            shapePointsData: FloorPlanMath.encode(pending.points),
+            shapeClosed: pending.closed
+        )
+        context.insert(area)
+        selectedWall = area
+        mode = .select
+        gym.currentWallName = name
+        for item in gyms { item.isCurrent = (item.id == gym.id) }
+        persistMap()
+    }
+
+    private func nextDefaultName(prefix: String) -> String {
+        let n = gym.areas.count + 1
+        return "\(prefix) \(n)"
+    }
+
+    private func hitTest(_ point: PlanPoint) -> GymArea? {
+        var best: (GymArea, Double)?
+        for wall in walls {
+            let pts = wall.floorPlanPoints()
+            if wall.shapeClosed, pts.count >= 3 {
+                let c = FloorPlanMath.centroid(of: pts)
+                let d = hypot(point.x - c.x, point.y - c.y)
+                if d < 0.12, best == nil || d < best!.1 {
+                    best = (wall, d)
                 }
             }
+            if let idx = FloorPlanMath.nearestSegmentIndex(in: pts, to: point) {
+                let a = pts[idx]
+                let b = pts[idx + 1]
+                let proj = FloorPlanMath.project(p: point, ontoSegmentFrom: a, to: b)
+                let d = hypot(point.x - proj.x, point.y - proj.y)
+                if d < 0.05, best == nil || d < best!.1 {
+                    best = (wall, d)
+                }
+            }
+        }
+        return best?.0
+    }
+
+    private func nearVertex(of wall: GymArea, point: PlanPoint) -> Bool {
+        wall.floorPlanPoints().contains { hypot($0.x - point.x, $0.y - point.y) < 0.04 }
+    }
+
+    private func normalized(_ location: CGPoint, in size: CGSize) -> PlanPoint {
+        let clamped = GymJoinMath.clampPin(
+            x: location.x / max(size.width, 1),
+            y: location.y / max(size.height, 1)
         )
+        return PlanPoint(x: clamped.x, y: clamped.y)
     }
 
     private func pixel(_ point: PlanPoint, in size: CGSize) -> CGPoint {
         CGPoint(x: point.x * max(size.width, 1), y: point.y * max(size.height, 1))
     }
 
-    private func resolvedStoredPoints(for area: GymArea) -> [PlanPoint] {
-        let stored = area.shapePoints
-        if stored.isEmpty {
-            return area.floorPlanPoints()
-        }
-        return stored
+    private func openRoutes(for area: GymArea) {
+        routesWall = area
+        selectedWall = area
+        gym.currentWallName = area.name
+        for item in gyms { item.isCurrent = (item.id == gym.id) }
+        persistMap()
     }
 
-    private func extendShape(on area: GymArea) {
-        var pts = resolvedStoredPoints(for: area)
-        pts.append(FloorPlanMath.extendedPoint(after: pts))
-        area.setFloorPlanPoints(pts)
+    private func persistMap() {
+        try? context.save()
+        PhoneWatchBridge.shared.publishSnapshot()
+    }
+
+    private func removeWall(_ area: GymArea) {
+        let name = area.name
+        if selectedWall?.id == area.id { selectedWall = nil }
+        if routesWall?.id == area.id { routesWall = nil }
+        context.delete(area)
+        if gym.currentWallName == name {
+            gym.currentWallName = gym.areas.first?.name
+        }
         persistMap()
     }
 
     private func routeList(for area: GymArea) -> some View {
         let routes = area.routes.sorted { $0.createdAt < $1.createdAt }
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(area.name)
-                    .font(.headline)
-                Spacer()
-                if gym.currentWallName == area.name {
-                    Text("Watch")
-                        .font(.caption.bold())
-                        .foregroundStyle(.stravaOrange)
+            TextField("Your name on updates", text: $climberName)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: climberName) { _, value in
+                    ClimberIdentity.name = value
                 }
-                Button("Edit shape") {
-                    selectedArea = nil
-                    floorTool = .editShape
-                    shapeFocusArea = area
-                }
-                .font(.caption.bold())
-                Button("Remove wall", role: .destructive) { removeWall(area) }
-                    .font(.caption.bold())
-            }
 
             if routes.isEmpty {
                 Text("No routes on this wall yet.")
@@ -415,9 +564,7 @@ struct GymMapView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(HoldColor.allCases) { color in
-                        Button {
-                            draftColor = color
-                        } label: {
+                        Button { draftColor = color } label: {
                             Circle()
                                 .fill(Color(hold: color))
                                 .frame(width: 26, height: 26)
@@ -456,40 +603,6 @@ struct GymMapView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func openRoutes(for area: GymArea) {
-        selectedArea = area
-        gym.currentWallName = area.name
-        for item in gyms { item.isCurrent = (item.id == gym.id) }
-        persistMap()
-    }
-
-    private func persistMap() {
-        try? context.save()
-        PhoneWatchBridge.shared.publishSnapshot()
-    }
-
-    private func addWall() {
-        let raw = wallName
-        wallName = ""
-        guard GymJoinMath.isUsableName(raw) else { return }
-        let slot = GymJoinMath.nextGridSlot(existingCount: gym.areas.count)
-        let anchor = PlanPoint(x: slot.x, y: slot.y)
-        let segment = FloorPlanMath.defaultSegment(anchor: anchor)
-        let area = GymArea(
-            name: raw.trimmingCharacters(in: .whitespacesAndNewlines),
-            x: slot.x,
-            y: slot.y,
-            gym: gym,
-            shapePointsData: FloorPlanMath.encode(segment)
-        )
-        context.insert(area)
-        try? context.save()
-        shapeFocusArea = area
-        floorTool = .editShape
     }
 
     private func addRoute(on area: GymArea) {
@@ -513,18 +626,6 @@ struct GymMapView: View {
 
     private func removeRoute(_ route: GymRoute) {
         context.delete(route)
-        persistMap()
-    }
-
-    private func removeWall(_ area: GymArea) {
-        let name = area.name
-        if selectedArea?.id == area.id { selectedArea = nil }
-        if shapeFocusArea?.id == area.id { shapeFocusArea = nil }
-        context.delete(area)
-        if gym.currentWallName == name {
-            gym.currentWallName = gym.areas.first?.name
-            selectedArea = gym.areas.first
-        }
         persistMap()
     }
 

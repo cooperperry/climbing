@@ -160,4 +160,58 @@ public enum FloorPlanMath {
         }
         return bestIndex
     }
+
+    /// Axis-aligned square centered on `center` with side length `size`.
+    public static func square(center: PlanPoint, size: Double = 0.18) -> [PlanPoint] {
+        let half = size / 2
+        return [
+            PlanPoint(x: center.x - half, y: center.y - half),
+            PlanPoint(x: center.x + half, y: center.y - half),
+            PlanPoint(x: center.x + half, y: center.y + half),
+            PlanPoint(x: center.x - half, y: center.y + half),
+        ]
+    }
+
+    /// Closest point on the segment `a`–`b` to `p`.
+    public static func project(p: PlanPoint, ontoSegmentFrom a: PlanPoint, to b: PlanPoint) -> PlanPoint {
+        let abx = b.x - a.x
+        let aby = b.y - a.y
+        let apx = p.x - a.x
+        let apy = p.y - a.y
+        let abLenSq = abx * abx + aby * aby
+        let t: Double
+        if abLenSq <= 1e-12 {
+            t = 0
+        } else {
+            t = min(1, max(0, (apx * abx + apy * aby) / abLenSq))
+        }
+        return PlanPoint(x: a.x + t * abx, y: a.y + t * aby)
+    }
+
+    /// Insert a vertex on the nearest edge to `p`. Returns nil if too far or not enough points.
+    public static func insertingVertex(in points: [PlanPoint], at p: PlanPoint, maxDistance: Double = 0.06) -> [PlanPoint]? {
+        guard let index = nearestSegmentIndex(in: points, to: p), index < points.count - 1 else { return nil }
+        let a = points[index]
+        let b = points[index + 1]
+        let projected = project(p: p, ontoSegmentFrom: a, to: b)
+        let dist = hypot(p.x - projected.x, p.y - projected.y)
+        guard dist <= maxDistance else { return nil }
+        var next = points
+        next.insert(projected, at: index + 1)
+        return next
+    }
+
+    /// Split an open polyline at the nearest edge to `p` into two polylines.
+    public static func split(points: [PlanPoint], at p: PlanPoint, maxDistance: Double = 0.06) -> (left: [PlanPoint], right: [PlanPoint])? {
+        guard points.count >= 2, let index = nearestSegmentIndex(in: points, to: p) else { return nil }
+        let a = points[index]
+        let b = points[index + 1]
+        let mid = project(p: p, ontoSegmentFrom: a, to: b)
+        let dist = hypot(p.x - mid.x, p.y - mid.y)
+        guard dist <= maxDistance else { return nil }
+        let left = Array(points[0 ... index]) + [mid]
+        let right = [mid] + Array(points[(index + 1)...])
+        guard left.count >= 2, right.count >= 2 else { return nil }
+        return (left, right)
+    }
 }

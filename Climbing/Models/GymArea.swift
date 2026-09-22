@@ -19,6 +19,9 @@ final class GymArea {
     /// When nil, the map uses a short default segment at `(x, y)`.
     var shapePointsData: Data?
 
+    /// When true, the polyline is drawn closed (square / polygon). Older walls default open.
+    var shapeClosed: Bool = false
+
     /// Today's problems on this photo. Cleared on a set reset; send logs stay.
     @Relationship(deleteRule: .cascade, inverse: \GymRoute.wall)
     var routes: [GymRoute] = []
@@ -30,7 +33,8 @@ final class GymArea {
         y: Double,
         gym: ClimbGym? = nil,
         photoData: Data? = nil,
-        shapePointsData: Data? = nil
+        shapePointsData: Data? = nil,
+        shapeClosed: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -40,6 +44,7 @@ final class GymArea {
         self.gym = gym
         self.photoData = photoData
         self.shapePointsData = shapePointsData
+        self.shapeClosed = shapeClosed
     }
 
     var shapePoints: [PlanPoint] {

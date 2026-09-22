@@ -26,4 +26,32 @@ final class FloorPlanShapeTests: XCTestCase {
         let moved = FloorPlanMath.translate(points: points, dx: 0.2, dy: 0)
         XCTAssertEqual(moved[0].x, 1.0, accuracy: 1e-9)
     }
+
+    func testSquareHasFourCorners() {
+        let sq = FloorPlanMath.square(center: PlanPoint(x: 0.5, y: 0.5), size: 0.2)
+        XCTAssertEqual(sq.count, 4)
+        XCTAssertEqual(FloorPlanMath.centroid(of: sq).x, 0.5, accuracy: 1e-9)
+    }
+
+    func testInsertVertexOnEdge() {
+        let line = [
+            PlanPoint(x: 0.2, y: 0.5),
+            PlanPoint(x: 0.8, y: 0.5),
+        ]
+        let next = FloorPlanMath.insertingVertex(in: line, at: PlanPoint(x: 0.5, y: 0.51))
+        XCTAssertEqual(next?.count, 3)
+        XCTAssertEqual(next?[1].x, 0.5, accuracy: 1e-6)
+    }
+
+    func testSplitLineInTwo() {
+        let line = [
+            PlanPoint(x: 0.1, y: 0.5),
+            PlanPoint(x: 0.9, y: 0.5),
+        ]
+        let parts = FloorPlanMath.split(points: line, at: PlanPoint(x: 0.5, y: 0.5))
+        XCTAssertEqual(parts?.left.count, 2)
+        XCTAssertEqual(parts?.right.count, 2)
+        XCTAssertEqual(parts?.left.last?.x, 0.5, accuracy: 1e-6)
+        XCTAssertEqual(parts?.right.first?.x, 0.5, accuracy: 1e-6)
+    }
 }
