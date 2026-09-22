@@ -54,4 +54,15 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(parts?.left.last?.x, 0.5, accuracy: 1e-6)
         XCTAssertEqual(parts?.right.first?.x, 0.5, accuracy: 1e-6)
     }
+
+    func testRectangleFromDragCorners() {
+        let rect = FloorPlanMath.rectangle(
+            from: PlanPoint(x: 0.2, y: 0.3),
+            to: PlanPoint(x: 0.6, y: 0.7)
+        )
+        XCTAssertEqual(rect.count, 4)
+        XCTAssertEqual(rect[0].x, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(rect[2].x, 0.6, accuracy: 1e-9)
+        XCTAssertEqual(rect[2].y, 0.7, accuracy: 1e-9)
+    }
 }

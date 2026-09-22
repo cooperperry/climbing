@@ -172,6 +172,29 @@ public enum FloorPlanMath {
         ]
     }
 
+    /// Axis-aligned rectangle from one corner drag to the opposite corner.
+    public static func rectangle(from a: PlanPoint, to b: PlanPoint) -> [PlanPoint] {
+        let minX = min(a.x, b.x)
+        let maxX = max(a.x, b.x)
+        let minY = min(a.y, b.y)
+        let maxY = max(a.y, b.y)
+        return [
+            PlanPoint(x: minX, y: minY),
+            PlanPoint(x: maxX, y: minY),
+            PlanPoint(x: maxX, y: maxY),
+            PlanPoint(x: minX, y: maxY),
+        ]
+    }
+
+    public static func distance(_ a: PlanPoint, _ b: PlanPoint) -> Double {
+        hypot(a.x - b.x, a.y - b.y)
+    }
+
+    /// Tip beyond the last vertex — used as a drag handle to add a segment.
+    public static func addSegmentHandle(after points: [PlanPoint], step: Double = 0.07) -> PlanPoint {
+        extendedPoint(after: points, step: step)
+    }
+
     /// Closest point on the segment `a`–`b` to `p`.
     public static func project(p: PlanPoint, ontoSegmentFrom a: PlanPoint, to b: PlanPoint) -> PlanPoint {
         let abx = b.x - a.x
