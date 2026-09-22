@@ -80,6 +80,7 @@ struct GymMapView: View {
     @State private var newFloorDraft = ""
     @State private var showMapSettings = false
     @State private var showWallList = false
+    @State private var showUnlockFloor = false
     @State private var didCenterMap = false
 
     private var scale: CustomGradeScale? {
