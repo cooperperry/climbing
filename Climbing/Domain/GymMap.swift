@@ -147,18 +147,100 @@ public enum FloorPlanMath {
         return dx * dx + dy * dy
     }
 
-    public static func nearestSegmentIndex(in points: [PlanPoint], to p: PlanPoint) -> Int? {
-        guard points.count >= 2 else { return nil }
+    /// Number of drawable edges in a polyline / polygon.
+    public static func segmentCount(points: [PlanPoint], closed: Bool) -> Int {
+        guard points.count >= 2 else { return 0 }
+        return closed ? points.count : points.count - 1
+    }
+
+    public static func segmentEndpoints(
+        points: [PlanPoint],
+        closed: Bool,
+        index: Int
+    ) -> (PlanPoint, PlanPoint)? {
+        let count = segmentCount(points: points, closed: closed)
+        guard index >= 0, index < count else { return nil }
+        if closed {
+            return (points[index], points[(index + 1) % points.count])
+        }
+        return (points[index], points[index + 1])
+    }
+
+    public static func midpoint(of points: [PlanPoint], closed: Bool, segment index: Int) -> PlanPoint? {
+        guard let (a, b) = segmentEndpoints(points: points, closed: closed, index: index) else { return nil }
+        return PlanPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+    }
+
+    public static func nearestSegmentIndex(
+        in points: [PlanPoint],
+        closed: Bool = false,
+        to p: PlanPoint
+    ) -> Int? {
+        let count = segmentCount(points: points, closed: closed)
+        guard count > 0 else { return nil }
         var bestIndex: Int?
         var bestDist = Double.greatestFiniteMagnitude
-        for i in 0 ..< (points.count - 1) {
-            let d = distanceSquared(from: p, toSegmentFrom: points[i], to: points[i + 1])
+        for i in 0 ..< count {
+            guard let (a, b) = segmentEndpoints(points: points, closed: closed, index: i) else { continue }
+            let d = distanceSquared(from: p, toSegmentFrom: a, to: b)
             if d < bestDist {
                 bestDist = d
                 bestIndex = i
             }
         }
         return bestIndex
+    }
+
+    /// Result of deleting one edge from a wall outline.
+    public enum SegmentRemoval: Equatable, Sendable {
+        /// Nothing left — delete the wall.
+        case empty
+        /// One remaining outline (possibly opened if it was closed).
+        case single(points: [PlanPoint], closed: Bool)
+        /// Open polyline split into two walls.
+        case split(left: [PlanPoint], right: [PlanPoint])
+    }
+
+    /// Delete the edge at `index`. Closed shapes open at the cut; open lines shorten or split.
+    public static func removingSegment(
+        at index: Int,
+        from points: [PlanPoint],
+        closed: Bool
+    ) -> SegmentRemoval {
+        let count = segmentCount(points: points, closed: closed)
+        guard points.count >= 2, index >= 0, index < count else {
+            return .single(points: points, closed: closed)
+        }
+
+        if closed {
+            let n = points.count
+            var opened: [PlanPoint] = []
+            let start = (index + 1) % n
+            for offset in 0 ..< n {
+                opened.append(points[(start + offset) % n])
+            }
+            return .single(points: opened, closed: false)
+        }
+
+        if points.count == 2 {
+            return .empty
+        }
+        if index == 0 {
+            let rest = Array(points.dropFirst())
+            return rest.count >= 2 ? .single(points: rest, closed: false) : .empty
+        }
+        if index == points.count - 2 {
+            let rest = Array(points.dropLast())
+            return rest.count >= 2 ? .single(points: rest, closed: false) : .empty
+        }
+        let left = Array(points[0 ... index])
+        let right = Array(points[(index + 1)...])
+        if left.count >= 2, right.count >= 2 {
+            return .split(left: left, right: right)
+        }
+        if left.count >= 2 { return .single(points: left, closed: false) }
+        if right.count >= 2 { return .single(points: right, closed: false) }
+        return .empty
     }
 
     /// Axis-aligned square centered on `center` with side length `size`.
@@ -235,13 +317,22 @@ public enum FloorPlanMath {
     }
 
     /// Insert a vertex on the nearest edge to `p`. Returns nil if too far or not enough points.
-    public static func insertingVertex(in points: [PlanPoint], at p: PlanPoint, maxDistance: Double = 0.06) -> [PlanPoint]? {
-        guard let index = nearestSegmentIndex(in: points, to: p), index < points.count - 1 else { return nil }
-        let a = points[index]
-        let b = points[index + 1]
+    public static func insertingVertex(
+        in points: [PlanPoint],
+        closed: Bool = false,
+        at p: PlanPoint,
+        maxDistance: Double = 0.06
+    ) -> [PlanPoint]? {
+        guard let index = nearestSegmentIndex(in: points, closed: closed, to: p) else { return nil }
+        guard let (a, b) = segmentEndpoints(points: points, closed: closed, index: index) else { return nil }
         let projected = project(p: p, ontoSegmentFrom: a, to: b)
         let dist = hypot(p.x - projected.x, p.y - projected.y)
         guard dist <= maxDistance else { return nil }
+        if closed {
+            var next = points
+            next.insert(projected, at: index + 1)
+            return next
+        }
         var next = points
         next.insert(projected, at: index + 1)
         return next

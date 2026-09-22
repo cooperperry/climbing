@@ -153,4 +153,57 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(chrome.x, 0.5, accuracy: 1e-6)
         XCTAssertLessThan(chrome.y, 0.5)
     }
+
+    func testRemoveOnlySegmentDeletesLine() {
+        let line = [
+            PlanPoint(x: 0.2, y: 0.5),
+            PlanPoint(x: 0.8, y: 0.5),
+        ]
+        XCTAssertEqual(
+            FloorPlanMath.removingSegment(at: 0, from: line, closed: false),
+            .empty
+        )
+    }
+
+    func testRemoveEndSegmentShortensLine() {
+        let line = [
+            PlanPoint(x: 0.1, y: 0.5),
+            PlanPoint(x: 0.5, y: 0.5),
+            PlanPoint(x: 0.9, y: 0.5),
+        ]
+        let result = FloorPlanMath.removingSegment(at: 1, from: line, closed: false)
+        guard case .single(let points, let closed) = result else {
+            return XCTFail("expected shortened line")
+        }
+        XCTAssertFalse(closed)
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points[0].x, 0.1, accuracy: 1e-9)
+        XCTAssertEqual(points[1].x, 0.5, accuracy: 1e-9)
+    }
+
+    func testRemoveMiddleSegmentSplitsLine() {
+        let line = [
+            PlanPoint(x: 0.1, y: 0.5),
+            PlanPoint(x: 0.3, y: 0.5),
+            PlanPoint(x: 0.7, y: 0.5),
+            PlanPoint(x: 0.9, y: 0.5),
+        ]
+        let result = FloorPlanMath.removingSegment(at: 1, from: line, closed: false)
+        guard case .split(let left, let right) = result else {
+            return XCTFail("expected split")
+        }
+        XCTAssertEqual(left.count, 2)
+        XCTAssertEqual(right.count, 2)
+    }
+
+    func testRemovePolygonEdgeOpensShape() {
+        let square = FloorPlanMath.square(center: PlanPoint(x: 0.5, y: 0.5), size: 0.2)
+        let result = FloorPlanMath.removingSegment(at: 0, from: square, closed: true)
+        guard case .single(let points, let closed) = result else {
+            return XCTFail("expected opened polygon")
+        }
+        XCTAssertFalse(closed)
+        XCTAssertEqual(points.count, 4)
+        XCTAssertEqual(FloorPlanMath.segmentCount(points: points, closed: false), 3)
+    }
 }

@@ -42,6 +42,7 @@ struct GymMapView: View {
 
     @State private var mode: MapMode = .line
     @State private var selectedWall: GymArea?
+    @State private var selectedSegmentIndex: Int?
     @State private var routesWall: GymArea?
     @State private var renameDraft = ""
     @State private var polygonDraft: [PlanPoint] = []
@@ -72,7 +73,10 @@ struct GymMapView: View {
 
     private var hint: String {
         if selectedWall != nil {
-            return "Drag corners or either + to extend. Trash deletes the shape."
+            if selectedSegmentIndex != nil {
+                return "Trash removes that segment. Tap elsewhere on the shape for the whole wall."
+            }
+            return "Tap a segment to select it, then trash. Drag + to extend. Empty space draws."
         }
         switch mode {
         case .line:
@@ -113,6 +117,7 @@ struct GymMapView: View {
                 .onChange(of: selectedWall?.id) { _, _ in
                     renameDraft = selectedWall?.name ?? ""
                     isEditingName = false
+                    selectedSegmentIndex = nil
                 }
 
                 if mode == .polygon, polygonDraft.count >= 2 {
@@ -311,17 +316,29 @@ struct GymMapView: View {
         let points = wall.floorPlanPoints()
         let focused = selectedWall?.id == wall.id
         let stroke = focused ? Color.stravaOrange : Color.white.opacity(0.9)
-        return Path { path in
-            guard let first = points.first else { return }
-            path.move(to: pixel(first, in: size))
-            for pt in points.dropFirst() {
-                path.addLine(to: pixel(pt, in: size))
+        let segmentCount = FloorPlanMath.segmentCount(points: points, closed: wall.shapeClosed)
+        return ZStack {
+            Path { path in
+                guard let first = points.first else { return }
+                path.move(to: pixel(first, in: size))
+                for pt in points.dropFirst() {
+                    path.addLine(to: pixel(pt, in: size))
+                }
+                if wall.shapeClosed {
+                    path.closeSubpath()
+                }
             }
-            if wall.shapeClosed {
-                path.closeSubpath()
+            .stroke(stroke, style: StrokeStyle(lineWidth: focused ? 4 : 2.5, lineCap: .round, lineJoin: .round))
+
+            if focused, let seg = selectedSegmentIndex, seg < segmentCount,
+               let (a, b) = FloorPlanMath.segmentEndpoints(points: points, closed: wall.shapeClosed, index: seg) {
+                Path { path in
+                    path.move(to: pixel(a, in: size))
+                    path.addLine(to: pixel(b, in: size))
+                }
+                .stroke(Color.red, style: StrokeStyle(lineWidth: 6, lineCap: .round))
             }
         }
-        .stroke(stroke, style: StrokeStyle(lineWidth: focused ? 4 : 2.5, lineCap: .round, lineJoin: .round))
         .allowsHitTesting(false)
     }
 
@@ -393,9 +410,20 @@ struct GymMapView: View {
     }
 
     private func trashHandle(for wall: GymArea, in size: CGSize) -> some View {
-        let anchor = FloorPlanMath.chromeAnchor(for: wall.floorPlanPoints())
+        let points = wall.floorPlanPoints()
+        let anchor: PlanPoint
+        if let seg = selectedSegmentIndex,
+           let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: seg) {
+            anchor = mid
+        } else {
+            anchor = FloorPlanMath.chromeAnchor(for: points)
+        }
         return Button {
-            removeWall(wall)
+            if selectedSegmentIndex != nil {
+                deleteSelectedSegment(on: wall)
+            } else {
+                removeWall(wall)
+            }
         } label: {
             Image(systemName: "trash.fill")
                 .font(.body.bold())
@@ -570,22 +598,66 @@ struct GymMapView: View {
     }
 
     private func handleSelectTap(at point: PlanPoint) {
-        if let wall = selectedWall,
-           let next = FloorPlanMath.insertingVertex(in: wall.floorPlanPoints(), at: point) {
-            wall.setFloorPlanPoints(next)
-            persistMap()
-            return
+        if let wall = selectedWall {
+            let pts = wall.floorPlanPoints()
+            if let idx = FloorPlanMath.nearestSegmentIndex(in: pts, closed: wall.shapeClosed, to: point),
+               let (a, b) = FloorPlanMath.segmentEndpoints(points: pts, closed: wall.shapeClosed, index: idx) {
+                let proj = FloorPlanMath.project(p: point, ontoSegmentFrom: a, to: b)
+                if FloorPlanMath.distance(point, proj) < 0.07 {
+                    if selectedSegmentIndex == idx,
+                       let next = FloorPlanMath.insertingVertex(in: pts, closed: wall.shapeClosed, at: point) {
+                        // Second tap on the same segment adds a bend.
+                        wall.setFloorPlanPoints(next)
+                        selectedSegmentIndex = nil
+                        persistMap()
+                        return
+                    }
+                    selectedSegmentIndex = idx
+                    return
+                }
+            }
         }
         if let hit = hitTest(point) {
             applyRename(to: selectedWall)
             selectedWall = hit
+            selectedSegmentIndex = nil
             renameDraft = hit.name
             gym.currentWallName = hit.name.isEmpty ? nil : hit.name
             persistMap()
         } else {
             applyRename(to: selectedWall)
             selectedWall = nil
+            selectedSegmentIndex = nil
             renameDraft = ""
+        }
+    }
+
+    private func deleteSelectedSegment(on wall: GymArea) {
+        guard let index = selectedSegmentIndex else { return }
+        let points = wall.floorPlanPoints()
+        let result = FloorPlanMath.removingSegment(at: index, from: points, closed: wall.shapeClosed)
+        selectedSegmentIndex = nil
+        switch result {
+        case .empty:
+            removeWall(wall)
+        case .single(let next, let closed):
+            wall.setFloorPlanPoints(next)
+            wall.shapeClosed = closed
+            persistMap()
+        case .split(let left, let right):
+            wall.setFloorPlanPoints(left)
+            wall.shapeClosed = false
+            let rightWall = GymArea(
+                name: "",
+                x: FloorPlanMath.centroid(of: right).x,
+                y: FloorPlanMath.centroid(of: right).y,
+                gym: gym,
+                shapePointsData: FloorPlanMath.encode(right),
+                shapeClosed: false
+            )
+            context.insert(rightWall)
+            persistMap()
+            selectedWall = wall
         }
     }
 
@@ -662,9 +734,8 @@ struct GymMapView: View {
                     best = (wall, d)
                 }
             }
-            if let idx = FloorPlanMath.nearestSegmentIndex(in: pts, to: point) {
-                let a = pts[idx]
-                let b = pts[idx + 1]
+            if let idx = FloorPlanMath.nearestSegmentIndex(in: pts, closed: wall.shapeClosed, to: point),
+               let (a, b) = FloorPlanMath.segmentEndpoints(points: pts, closed: wall.shapeClosed, index: idx) {
                 let proj = FloorPlanMath.project(p: point, ontoSegmentFrom: a, to: b)
                 let d = FloorPlanMath.distance(point, proj)
                 if d < 0.07, best == nil || d < best!.1 {
@@ -689,7 +760,14 @@ struct GymMapView: View {
     }
 
     private func nearTrash(of wall: GymArea, point: PlanPoint) -> Bool {
-        let anchor = FloorPlanMath.chromeAnchor(for: wall.floorPlanPoints())
+        let points = wall.floorPlanPoints()
+        let anchor: PlanPoint
+        if let seg = selectedSegmentIndex,
+           let mid = FloorPlanMath.midpoint(of: points, closed: wall.shapeClosed, segment: seg) {
+            anchor = mid
+        } else {
+            anchor = FloorPlanMath.chromeAnchor(for: points)
+        }
         return FloorPlanMath.distance(anchor, point) < 0.06
     }
 
@@ -723,6 +801,7 @@ struct GymMapView: View {
         let name = area.name
         if selectedWall?.id == area.id {
             selectedWall = nil
+            selectedSegmentIndex = nil
             renameDraft = ""
         }
         if routesWall?.id == area.id { routesWall = nil }
