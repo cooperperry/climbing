@@ -352,16 +352,23 @@ final class WorkoutManager: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBui
         sensor.startRelativeAltitudeUpdates(to: .main) { [weak self] data, _ in
             guard let self, let data, self.isRunning, !self.isPaused else { return }
             let meters = data.relativeAltitude.doubleValue
-            let moving = self.motionVariance >= StrainMath.climbingMotionThreshold
-            if self.filter.ingest(meters, countingGain: moving) != nil {
-                self.verticalGainMeters = self.filter.gainMeters
-                self.maxAltitude = self.filter.maxAltitude
+            let counting = ClimbGainGate.shouldCount(
+                motionVariance: self.motionVariance,
+                bpm: self.currentBPM,
+                maxHR: self.maxHR
+            )
+            self.filter.ingestClimb(
+                meters,
+                countingGain: counting,
+                now: Date().timeIntervalSince1970
+            )
+            self.verticalGainMeters = self.filter.gainMeters
+            self.maxAltitude = self.filter.maxAltitude
+            if counting, self.filter.gainMeters > 0 {
                 let t = Date().timeIntervalSince1970
                 self.gainTimeline.append((t, self.filter.gainMeters))
                 let cutoff = t - 90
                 self.gainTimeline.removeAll { $0.t < cutoff }
-            } else {
-                self.verticalGainMeters = self.filter.gainMeters
             }
         }
     }

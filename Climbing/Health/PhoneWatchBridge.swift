@@ -197,11 +197,18 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
             break
         }
         publishSnapshot()
+        replyHandler?(snapshotReply(in: context))
+    }
+
+    private func snapshotReply(in context: ModelContext) -> [String: Any] {
+        var reply: [String: Any] = [:]
         if let data = try? JSONEncoder().encode(makeSnapshot(in: context)) {
-            replyHandler?([WatchSync.payload: data])
-        } else {
-            replyHandler?([:])
+            reply[WatchSync.payload] = data
         }
+        if let gym = try? JSONEncoder().encode(gymContext(in: context)) {
+            reply[WatchSync.gym] = gym
+        }
+        return reply
     }
 
     private func ingestLiveOrSummary(_ message: [String: Any], finished: Bool) {
@@ -505,6 +512,10 @@ final class PhoneWatchBridge: NSObject, WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
     ) {
+        Task { @MainActor in self.publishSnapshot() }
+    }
+
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         Task { @MainActor in self.publishSnapshot() }
     }
 

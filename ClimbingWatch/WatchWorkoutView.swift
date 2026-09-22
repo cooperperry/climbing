@@ -34,7 +34,10 @@ struct WatchWorkoutView: View {
                 onStart: { manager.startFromButton() }
             )
             .toolbar(.hidden, for: .navigationBar)
-            .onAppear { manager.ensureIdle() }
+            .onAppear {
+                manager.ensureIdle()
+                WatchStore.shared.requestGymMap()
+            }
         }
     }
 }
@@ -270,8 +273,8 @@ struct WatchLogPage: View {
                 }
             } else if manager.walls.isEmpty {
                 Text(manager.gymName == nil
-                     ? "I'm here on the phone, then pin routes"
-                     : "Add a wall and pin routes on the phone")
+                     ? "Open Climber on your phone"
+                     : "Add walls on the phone floor plan")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -342,6 +345,7 @@ struct WatchLogPage: View {
         }
         .navigationTitle("Send")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { WatchStore.shared.requestGymMap() }
     }
 
     private func outcomeButton(_ title: String, _ outcome: ClimbOutcome, _ tint: Color) -> some View {

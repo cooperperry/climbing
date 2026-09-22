@@ -85,4 +85,9 @@ final class WatchGymContextTests: XCTestCase {
             )
         )
     }
+
+    func testCreditUsesTheClimberName() {
+        XCTAssertEqual(RouteCredit.line(name: "Jack", at: nil), "Jack")
+        XCTAssertEqual(RouteCredit.line(name: "  ", at: nil), "Someone")
+    }
 }

@@ -21,7 +21,7 @@ struct WatchRouteMap: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Color.white.opacity(0.08))
                     if routes.isEmpty {
-                        Text("Pin routes on the phone")
+                    Text("No routes on this wall yet")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)

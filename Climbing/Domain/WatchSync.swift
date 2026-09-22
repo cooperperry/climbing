@@ -27,6 +27,7 @@ public enum WatchSync {
     public static let wallPhotos = "wallPhotos"
     public static let color = "color"
     public static let routeLabel = "routeLabel"
+    public static let refresh = "refresh"
 }
 
 /// One problem on the current set. Pins die when the wall is reset; send
@@ -146,6 +147,24 @@ public struct WatchGymContext: Equatable, Sendable, Codable {
             return phoneCurrent
         }
         return walls.first
+    }
+}
+
+/// Who last set a route, and when, for the gym floor plan.
+public enum RouteCredit {
+    public static func line(name: String?, at date: Date?, now: Date = Date()) -> String {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let who = trimmed.isEmpty ? "Someone" : trimmed
+        guard let date else { return who }
+        return "\(who) · \(relative(from: date, to: now))"
+    }
+
+    static func relative(from date: Date, to now: Date) -> String {
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return "just now" }
+        if seconds < 3_600 { return "\(Int(seconds / 60))m ago" }
+        if seconds < 86_400 { return "\(Int(seconds / 3_600))h ago" }
+        return "\(max(1, Int(seconds / 86_400)))d ago"
     }
 }
 

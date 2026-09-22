@@ -127,6 +127,10 @@ final class WatchStore: NSObject, WCSessionDelegate {
         }
     }
 
+    func requestGymMap() {
+        send([WatchSync.kind: WatchSync.refresh])
+    }
+
     func broadcastBPM() {
         guard let bpm = WorkoutManager.shared.currentBPM else { return }
         send([WatchSync.kind: WatchSync.bpm, WatchSync.value: bpm])
@@ -186,8 +190,11 @@ final class WatchStore: NSObject, WCSessionDelegate {
         guard let session, session.activationState == .activated else { return }
         if session.isReachable {
             session.sendMessage(message, replyHandler: { [weak self] reply in
-                if let data = reply[WatchSync.payload] as? Data {
-                    Task { @MainActor in self?.apply(data) }
+                Task { @MainActor in
+                    if let data = reply[WatchSync.payload] as? Data {
+                        self?.apply(data)
+                    }
+                    self?.ingestPhoneContext(reply)
                 }
             }, errorHandler: { _ in
                 session.transferUserInfo(message)
@@ -209,6 +216,7 @@ final class WatchStore: NSObject, WCSessionDelegate {
                 self.apply(data)
             }
             self.ingestPhoneContext(context)
+            self.requestGymMap()
         }
     }
 
@@ -217,6 +225,10 @@ final class WatchStore: NSObject, WCSessionDelegate {
             Task { @MainActor in self.apply(data) }
         }
         Task { @MainActor in self.ingestPhoneContext(applicationContext) }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        Task { @MainActor in self.ingestPhoneContext(userInfo) }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {

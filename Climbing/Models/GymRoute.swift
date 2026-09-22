@@ -12,6 +12,9 @@ final class GymRoute {
     var y: Double
     var disciplineRaw: String
     var createdAt: Date
+    /// Display name of the climber who last set this route. Optional so older pins migrate.
+    var updatedBy: String?
+    var updatedAt: Date?
     var wall: GymArea?
 
     var holdColor: HoldColor { HoldColor(rawValue: colorName) ?? .blue }
@@ -26,7 +29,9 @@ final class GymRoute {
         y: Double,
         discipline: ClimbDiscipline = .boulder,
         wall: GymArea? = nil,
-        createdAt: Date = .now
+        createdAt: Date = .now,
+        updatedBy: String? = nil,
+        updatedAt: Date? = nil
     ) {
         self.id = id
         self.grade = grade
@@ -37,5 +42,7 @@ final class GymRoute {
         self.disciplineRaw = discipline.rawValue
         self.wall = wall
         self.createdAt = createdAt
+        self.updatedBy = updatedBy
+        self.updatedAt = updatedAt ?? createdAt
     }
 }

@@ -89,6 +89,31 @@ final class ElevationMathTests: XCTestCase {
         XCTAssertEqual(ElevationFormat.speed(metersPerMinute: 3.048), "10 FT/M")
         XCTAssertEqual(ElevationFormat.speed(metersPerMinute: 10, useFeet: false), "10 M/MIN")
     }
+
+    func testShortPressureSpikeDoesNotCount() {
+        var filter = ElevationFilter()
+        let start = 1_000.0
+        filter.ingestClimb(0, countingGain: true, now: start)
+        filter.ingestClimb(1.4, countingGain: true, now: start + 2)
+        XCTAssertEqual(filter.gainMeters, 0)
+        filter.ingestClimb(1.4, countingGain: false, now: start + 3)
+        XCTAssertEqual(filter.gainMeters, 0)
+    }
+
+    func testRealClimbCommitsAfterItHolds() {
+        var filter = ElevationFilter()
+        let start = 1_000.0
+        filter.ingestClimb(0, countingGain: true, now: start)
+        filter.ingestClimb(2.5, countingGain: true, now: start + 6)
+        XCTAssertEqual(filter.gainMeters, 2.5, accuracy: 0.0001)
+    }
+
+    func testGainIgnoredWithoutHeartRateOrWhileStill() {
+        XCTAssertFalse(ClimbGainGate.shouldCount(motionVariance: 0.5, bpm: nil, maxHR: 190))
+        XCTAssertFalse(ClimbGainGate.shouldCount(motionVariance: 0.05, bpm: 150, maxHR: 190))
+        XCTAssertFalse(ClimbGainGate.shouldCount(motionVariance: 0.4, bpm: 90, maxHR: 190))
+        XCTAssertTrue(ClimbGainGate.shouldCount(motionVariance: 0.4, bpm: 140, maxHR: 190))
+    }
 }
 
 final class ClimbSessionPayloadTests: XCTestCase {
