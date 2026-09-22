@@ -20,6 +20,7 @@ struct GymMapView: View {
     @State private var logGrade: String?
     @State private var draftColor: HoldColor = .blue
     @State private var dragOrigin: [UUID: CGPoint] = [:]
+    @State private var canvasSize: CGSize = CGSize(width: 320, height: 340)
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -31,26 +32,22 @@ struct GymMapView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Lay the walls out like the gym's floor plan. Routes live on a wall, and each one shows who set it and when.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add each wall, then drag it into place. Tap a wall to set its routes.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
-                TextField("Your name on updates", text: $climberName)
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: climberName) { _, value in
-                        ClimberIdentity.name = value
-                    }
-
-                floorPlan
-
-                if let selectedArea {
-                    routeList(for: selectedArea)
+            TextField("Your name on updates", text: $climberName)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: climberName) { _, value in
+                    ClimberIdentity.name = value
                 }
-            }
-            .padding()
+
+            floorPlan
+                .frame(maxWidth: .infinity)
+                .frame(height: 340)
         }
+        .padding()
         .navigationTitle(gym.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -60,9 +57,6 @@ struct GymMapView: View {
         }
         .onAppear {
             prepareGrades()
-            if selectedArea == nil, let name = gym.currentWallName {
-                selectedArea = walls.first { $0.name == name }
-            }
         }
         .onChange(of: logDiscipline) { _, _ in
             logGrade = scale?.grades.first
@@ -74,30 +68,54 @@ struct GymMapView: View {
         } message: {
             Text("Name a section from the gym's floor plan, then drag it into place.")
         }
+        .sheet(item: $selectedArea) { area in
+            NavigationStack {
+                ScrollView {
+                    routeList(for: area)
+                        .padding()
+                }
+                .navigationTitle(area.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { selectedArea = nil }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
     private var floorPlan: some View {
         GeometryReader { geo in
-            ZStack {
+            let size = geo.size
+            ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 16)
                     .fill(Color.black)
                 if walls.isEmpty {
-                    Text("Add the walls from the gym's drawing")
+                    Text("Tap + and add Cave, Center, 360…")
                         .font(.subheadline.bold())
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(.white.opacity(0.75))
                         .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding()
                 }
                 ForEach(walls) { area in
-                    wallMark(area, in: geo.size)
+                    wallMark(area, in: size)
                 }
             }
+            .coordinateSpace(name: "floor")
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .onAppear { canvasSize = size }
+            .onChange(of: size.width) { _, _ in canvasSize = size }
+            .onChange(of: size.height) { _, _ in canvasSize = size }
         }
-        .frame(height: 380)
     }
 
     private func wallMark(_ area: GymArea, in size: CGSize) -> some View {
         let selected = selectedArea?.id == area.id
+        let width = max(size.width, 1)
+        let height = max(size.height, 1)
         return VStack(spacing: 2) {
             Text(area.name)
                 .font(.caption.bold())
@@ -110,28 +128,33 @@ struct GymMapView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(minWidth: 72)
-        .background(selected ? Color.stravaOrange : Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+        .background(selected ? Color.stravaOrange : Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
         .foregroundStyle(selected ? Color.black : Color.white)
-        .position(x: area.x * size.width, y: area.y * size.height)
-        .onTapGesture { select(area) }
+        .fixedSize()
+        .offset(x: area.x * width - 36, y: area.y * height - 22)
         .gesture(
-            DragGesture(minimumDistance: 8)
+            DragGesture(minimumDistance: 0, coordinateSpace: .named("floor"))
                 .onChanged { value in
                     let origin = dragOrigin[area.id] ?? CGPoint(x: area.x, y: area.y)
                     if dragOrigin[area.id] == nil {
                         dragOrigin[area.id] = origin
                     }
+                    let board = canvasSize == .zero ? CGSize(width: width, height: height) : canvasSize
                     let clamped = GymJoinMath.clampPin(
-                        x: origin.x + value.translation.width / max(size.width, 1),
-                        y: origin.y + value.translation.height / max(size.height, 1)
+                        x: origin.x + value.translation.width / max(board.width, 1),
+                        y: origin.y + value.translation.height / max(board.height, 1)
                     )
                     area.x = clamped.x
                     area.y = clamped.y
                 }
-                .onEnded { _ in
+                .onEnded { value in
                     dragOrigin[area.id] = nil
-                    try? context.save()
-                    PhoneWatchBridge.shared.publishSnapshot()
+                    if hypot(value.translation.width, value.translation.height) < 8 {
+                        select(area)
+                    } else {
+                        try? context.save()
+                        PhoneWatchBridge.shared.publishSnapshot()
+                    }
                 }
         )
     }
