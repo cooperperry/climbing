@@ -897,19 +897,19 @@ struct GymMapView: View {
         return best?.0
     }
 
-    /// Drag one pin onto another → join that cluster (target’s group + dragged’s group only)
-    /// and bounce everyone into a visible semi-circle. Does not pull in unrelated wall routes.
+    /// Drag one pin onto another → collect both clusters into one tight circle.
     private func snapMergeRoutes(dragged: GymRoute, onto target: GymRoute) {
         guard dragged.id != target.id else { return }
         let host = target.wall ?? dragged.wall
         let key = target.groupKey ?? dragged.groupKey ?? UUID().uuidString
 
+        // Collect existing cluster members from both sides.
         var cluster: [GymRoute] = [dragged, target]
         if let g = target.groupKey {
-            cluster += allFloorRoutes().filter { $0.groupKey == g }
+            cluster += allFloorRoutes().filter { $0.groupKey == g && $0.id != target.id }
         }
-        if let g = dragged.groupKey {
-            cluster += allFloorRoutes().filter { $0.groupKey == g }
+        if let g = dragged.groupKey, g != key {
+            cluster += allFloorRoutes().filter { $0.groupKey == g && $0.id != dragged.id }
         }
         var seen = Set<UUID>()
         cluster = cluster.filter { seen.insert($0.id).inserted }
@@ -920,14 +920,9 @@ struct GymMapView: View {
         }
 
         let sorted = cluster.sorted { $0.createdAt < $1.createdAt }
-        let center = PlanPoint(
-            x: (dragged.x + target.x) / 2,
-            y: (dragged.y + target.y) / 2
-        )
-        let slots = FloorPlanMath.dragMergedSemiCircle(
-            count: sorted.count,
-            around: center
-        )
+        let center = PlanPoint(x: target.x, y: target.y)
+        let slots = FloorPlanMath.mergeCluster(count: sorted.count, around: center)
+
         if let host {
             selectedWall = host
             if routesWall != nil { routesWall = host }

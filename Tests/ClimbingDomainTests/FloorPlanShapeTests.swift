@@ -219,40 +219,32 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertLessThan(pulled.x, toward.x)
     }
 
-    func testSemiCircleSlotsAreUpperArc() {
+    func testMergeClusterCountAndGrowth() {
         let center = PlanPoint(x: 0.5, y: 0.5)
-        let slots = FloorPlanMath.semiCircleSlots(count: 3, center: center, radius: 0.1)
-        XCTAssertEqual(slots.count, 3)
-        XCTAssertLessThan(slots[0].x, center.x)
-        XCTAssertGreaterThan(slots[2].x, center.x)
-        XCTAssertLessThan(slots[1].y, center.y)
-        for slot in slots {
-            XCTAssertLessThanOrEqual(slot.y, center.y + 1e-6)
+        let two = FloorPlanMath.mergeCluster(count: 2, around: center)
+        let five = FloorPlanMath.mergeCluster(count: 5, around: center)
+        let eight = FloorPlanMath.mergeCluster(count: 8, around: center)
+        XCTAssertEqual(two.count, 2)
+        XCTAssertEqual(five.count, 5)
+        XCTAssertEqual(eight.count, 8)
+        // Radius grows with count.
+        let r2 = FloorPlanMath.distance(two[0], center)
+        let r5 = FloorPlanMath.distance(five[0], center)
+        let r8 = FloorPlanMath.distance(eight[0], center)
+        XCTAssertGreaterThan(r5, r2)
+        XCTAssertGreaterThan(r8, r5)
+        // All pins equidistant from center.
+        for slot in five {
+            XCTAssertEqual(FloorPlanMath.distance(slot, center), r5, accuracy: 1e-6)
         }
     }
 
-    func testDragMergedSemiCircleGrowsVisiblyWithCount() {
-        let center = PlanPoint(x: 0.5, y: 0.5)
-        let two = FloorPlanMath.dragMergedSemiCircle(count: 2, around: center)
-        let four = FloorPlanMath.dragMergedSemiCircle(count: 4, around: center)
-        XCTAssertEqual(two.count, 2)
-        XCTAssertEqual(four.count, 4)
-        let r2 = FloorPlanMath.distance(two[0], center)
-        let r4 = FloorPlanMath.distance(four[0], center)
-        XCTAssertGreaterThan(r4, r2)
-        // Four tips must not collapse into a stack — chord between ends is large.
-        let endSpan = FloorPlanMath.distance(four[0], four[3])
-        XCTAssertGreaterThan(endSpan, 0.15)
-        // Interior pins sit above the center on the upper arc.
-        XCTAssertLessThan(four[1].y, center.y)
-        XCTAssertLessThan(four[2].y, center.y)
-    }
-
-    func testSemiCircleRadiusKeepsPinsApart() {
-        let r2 = FloorPlanMath.semiCircleRadius(forCount: 2)
-        let r4 = FloorPlanMath.semiCircleRadius(forCount: 4)
-        XCTAssertGreaterThanOrEqual(r2, 0.1)
-        XCTAssertGreaterThan(r4, r2)
+    func testMergeClusterSingleReturnsCentre() {
+        let center = PlanPoint(x: 0.3, y: 0.7)
+        let one = FloorPlanMath.mergeCluster(count: 1, around: center)
+        XCTAssertEqual(one.count, 1)
+        XCTAssertEqual(one[0].x, center.x, accuracy: 1e-9)
+        XCTAssertEqual(one[0].y, center.y, accuracy: 1e-9)
     }
 
     func testCircleSlotsFillRing() {

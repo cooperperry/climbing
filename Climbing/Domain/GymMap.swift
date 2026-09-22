@@ -549,7 +549,7 @@ public enum FloorPlanMath {
     }
 
     /// How close two route pins must be to snap-merge on drag.
-    public static let routeMergeDistance: Double = 0.055
+    public static let routeMergeDistance: Double = 0.07
 
     /// Soft magnetic pull while dragging one pin toward another.
     public static func magneticPull(
@@ -567,65 +567,24 @@ public enum FloorPlanMath {
         )
     }
 
-    /// Circle layout for a drag-merged cluster around the drop point.
-    public static func dragMergedCircle(
+    /// Tight circle of route pins around a center point.
+    /// Radius grows gently with count so pins stay readable but close together.
+    public static func mergeCluster(
         count: Int,
-        around center: PlanPoint,
-        existing: [PlanPoint]
-    ) -> [PlanPoint] {
-        dragMergedSemiCircle(count: count, around: center, existing: existing)
-    }
-
-    /// Upper semi-circle of map pins (screen y-down: arc goes left → up → right).
-    public static func semiCircleSlots(
-        count: Int,
-        center: PlanPoint,
-        radius: Double,
-        startAngle: Double = .pi,
-        sweep: Double = .pi
+        around center: PlanPoint
     ) -> [PlanPoint] {
         guard count > 0 else { return [] }
-        let r = max(radius, 0.05)
-        if count == 1 {
-            let angle = startAngle + sweep / 2
-            return [PlanPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * r)]
-        }
-        return (0 ..< count).map { index in
-            let t = Double(index) / Double(count - 1)
-            let angle = startAngle + sweep * t
+        if count == 1 { return [center] }
+        // Tight radius: 0.04 for 2 pins, growing ~0.012 per extra pin.
+        let radius = 0.04 + Double(count - 2) * 0.012
+        // Start at top (−π/2) and go clockwise.
+        return (0 ..< count).map { i in
+            let angle = -.pi / 2 + (2 * .pi) * Double(i) / Double(count)
             return PlanPoint(
-                x: center.x + cos(angle) * r,
-                y: center.y + sin(angle) * r
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
             )
         }
-    }
-
-    /// Radius so pin tips stay clearly separated along a semi-circle (~π·r arc).
-    public static func semiCircleRadius(forCount count: Int) -> Double {
-        let n = max(count, 1)
-        // ~0.085 board units between neighboring tips along the arc.
-        let spacing = 0.085
-        return max(0.1, Double(n - 1) * spacing / .pi + 0.04)
-    }
-
-    /// Semi-circle cluster for a drag-merge. Radius is based on count so sequential
-    /// merges grow into a visible fan instead of stacking on a tiny arc.
-    public static func dragMergedSemiCircle(
-        count: Int,
-        around center: PlanPoint,
-        existing: [PlanPoint] = []
-    ) -> [PlanPoint] {
-        guard count > 0 else { return [] }
-        _ = existing // call sites may pass current pins; spacing is count-driven.
-        let radius = semiCircleRadius(forCount: count)
-        // Full upper semi-circle (π → 2π): left, up, right.
-        return semiCircleSlots(
-            count: count,
-            center: center,
-            radius: radius,
-            startAngle: .pi,
-            sweep: .pi
-        )
     }
 
     /// Lay out `count` points in a circle using existing pins for center/radius when possible.
