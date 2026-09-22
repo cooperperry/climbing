@@ -80,7 +80,7 @@ struct GymMapView: View {
     @State private var newFloorDraft = ""
     @State private var showMapSettings = false
     @State private var showWallList = false
-    @State private var showUnlockFloor = false
+    @State private var didCenterMap = false
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -373,7 +373,7 @@ struct GymMapView: View {
                     }
                 }
                 Section {
-                    Button("Fit gym") { fitGymToScreen() }
+                    Button("Fit gym") { fitGymToScreen(in: canvasSize) }
                     Button("Reset zoom") {
                         zoomScale = 1
                         panOffset = .zero
@@ -669,7 +669,13 @@ struct GymMapView: View {
             .contentShape(Rectangle())
             .gesture(canvasGesture(in: size))
             .simultaneousGesture(zoomGesture)
-            .onAppear { canvasSize = size }
+            .onAppear {
+                canvasSize = size
+                if didCenterMap == false {
+                    didCenterMap = true
+                    fitGymToScreen(in: size)
+                }
+            }
             .onChange(of: size.width) { _, _ in canvasSize = size }
             .onChange(of: size.height) { _, _ in canvasSize = size }
         }
@@ -677,22 +683,41 @@ struct GymMapView: View {
 
     private func gridOverlay(in size: CGSize) -> some View {
         let step = FloorPlanMath.gridStep
+        let bounds = visibleBoardBounds(in: size)
         return Path { path in
-            var x = 0.0
-            while x <= 1.0 + 1e-9 {
-                path.move(to: pixel(PlanPoint(x: x, y: 0), in: size))
-                path.addLine(to: pixel(PlanPoint(x: x, y: 1), in: size))
+            var x = (bounds.minX / step).rounded(.down) * step
+            while x <= bounds.maxX + 1e-9 {
+                path.move(to: CGPoint(x: x * size.width, y: bounds.minY * size.height))
+                path.addLine(to: CGPoint(x: x * size.width, y: bounds.maxY * size.height))
                 x += step
             }
-            var y = 0.0
-            while y <= 1.0 + 1e-9 {
-                path.move(to: pixel(PlanPoint(x: 0, y: y), in: size))
-                path.addLine(to: pixel(PlanPoint(x: 1, y: y), in: size))
+            var y = (bounds.minY / step).rounded(.down) * step
+            while y <= bounds.maxY + 1e-9 {
+                path.move(to: CGPoint(x: bounds.minX * size.width, y: y * size.height))
+                path.addLine(to: CGPoint(x: bounds.maxX * size.width, y: y * size.height))
                 y += step
             }
         }
         .stroke(Color.white.opacity(0.12), lineWidth: 1)
         .allowsHitTesting(false)
+    }
+
+    /// Board rectangle currently on screen, so the grid covers the view instead of the old 0...1 box.
+    private func visibleBoardBounds(in size: CGSize) -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
+        let corners = [
+            CGPoint.zero,
+            CGPoint(x: size.width, y: 0),
+            CGPoint(x: 0, y: size.height),
+            CGPoint(x: size.width, y: size.height),
+        ]
+        let points = corners.map { boardLocation($0, in: size) }
+        let xs = points.map { $0.x / max(size.width, 1) }
+        let ys = points.map { $0.y / max(size.height, 1) }
+        let minX = xs.min() ?? 0
+        let maxX = xs.max() ?? 1
+        let minY = ys.min() ?? 0
+        let maxY = ys.max() ?? 1
+        return (minX - 0.02, maxX + 0.02, minY - 0.02, maxY + 0.02)
     }
 
     @ViewBuilder
@@ -1669,8 +1694,7 @@ struct GymMapView: View {
     }
 
     /// Frame every wall and pin in the phone-shaped canvas.
-    private func fitGymToScreen() {
-        let size = canvasSize
+    private func fitGymToScreen(in size: CGSize) {
         guard size.width > 1, size.height > 1 else { return }
         var xs: [Double] = []
         var ys: [Double] = []

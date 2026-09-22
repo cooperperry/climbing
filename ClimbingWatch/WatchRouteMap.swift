@@ -17,20 +17,13 @@ struct WatchGymMap: View {
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
                     )
                 ForEach(placedPins(project: project)) { placed in
-                    if placed.prominent {
-                        Text(placed.pin.grade)
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(placed.pin.holdColor.prefersDarkLabel ? Color.black : Color.white)
-                            .frame(width: 36, height: 36)
-                            .background(Color(hold: placed.pin.holdColor), in: Circle())
-                            .overlay { Circle().strokeBorder(Color.white, lineWidth: 3) }
-                            .position(placed.point)
-                    } else {
-                        Circle()
-                            .fill(Color(hold: placed.pin.holdColor).opacity(0.28))
-                            .frame(width: 6, height: 6)
-                            .position(placed.point)
-                    }
+                    Text(placed.pin.grade)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(placed.pin.holdColor.prefersDarkLabel ? Color.black : Color.white)
+                        .frame(width: 40, height: 40)
+                        .background(Color(hold: placed.pin.holdColor), in: Circle())
+                        .overlay { Circle().strokeBorder(Color.white, lineWidth: 3) }
+                        .position(placed.point)
                 }
             }
         }
@@ -50,18 +43,12 @@ struct WatchGymMap: View {
         }
     }
 
-    /// Fit this wall's outline and its routes into the watch, then nudge stacked grades apart.
+    /// Fit the whole wall. Its shape is the landmark; other routes are left off
+    /// because a stale set would point at the wrong place.
     private func projector(in size: CGSize) -> (Double, Double) -> CGPoint {
-        var anchorsX: [Double]
-        var anchorsY: [Double]
-        if wall.outline.count >= 2 {
-            anchorsX = wall.outline.map(\.x)
-            anchorsY = wall.outline.map(\.y)
-        } else {
-            anchorsX = wall.routes.map(\.x)
-            anchorsY = wall.routes.map(\.y)
-        }
-        if let highlightedID, let pin = wall.routes.first(where: { $0.id == highlightedID }) {
+        var anchorsX = wall.outline.map(\.x)
+        var anchorsY = wall.outline.map(\.y)
+        if let pin = selectedPin {
             anchorsX.append(pin.x)
             anchorsY.append(pin.y)
         }
@@ -72,11 +59,11 @@ struct WatchGymMap: View {
         let spanX = max(maxX - minX, 0.08)
         let spanY = max(maxY - minY, 0.08)
         let scale = min(
-            (Double(size.width) - 12) / spanX,
-            (Double(size.height) - 12) / spanY
+            (Double(size.width) - 16) / spanX,
+            (Double(size.height) - 48) / spanY
         )
         let originX = (Double(size.width) - spanX * scale) / 2
-        let originY = (Double(size.height) - spanY * scale) / 2
+        let originY = (Double(size.height) - 40 - spanY * scale) / 2
         return { x, y in
             CGPoint(
                 x: originX + (x - minX) * scale,
@@ -85,19 +72,26 @@ struct WatchGymMap: View {
         }
     }
 
+    private var selectedPin: WatchRoutePin? {
+        wall.routes.first { $0.id == highlightedID }
+    }
+
     private func placedPins(project: (Double, Double) -> CGPoint) -> [PlacedWatchPin] {
-        guard let highlightedID, let selected = wall.routes.first(where: { $0.id == highlightedID }) else {
-            return wall.routes.map { pin in
-                PlacedWatchPin(pin: pin, point: project(pin.x, pin.y), prominent: true)
-            }
+        guard let pin = selectedPin else { return [] }
+        return [PlacedWatchPin(pin: pin, point: project(pin.x, pin.y), prominent: true)]
+    }
+
+    /// Where the pin sits along the wall, in the same left-to-right sense as the phone map.
+    var placeCue: String {
+        guard let pin = selectedPin else { return "Match this shape to where you're standing." }
+        let xs = wall.outline.map(\.x)
+        guard let minX = xs.min(), let maxX = xs.max(), maxX - minX > 0.04 else {
+            return "Match this shape to where you're standing."
         }
-        var placed = [
-            PlacedWatchPin(pin: selected, point: project(selected.x, selected.y), prominent: true)
-        ]
-        for pin in wall.routes where pin.id != selected.id {
-            placed.append(PlacedWatchPin(pin: pin, point: project(pin.x, pin.y), prominent: false))
-        }
-        return placed
+        let t = (pin.x - minX) / (maxX - minX)
+        if t < 0.34 { return "Left side of this shape" }
+        if t > 0.66 { return "Right side of this shape" }
+        return "Middle of this shape"
     }
 }
 
@@ -125,9 +119,8 @@ struct WatchBoulderDetail: View {
             WatchGymMap(wall: wall, highlightedID: pin.id)
                 .allowsHitTesting(false)
             VStack(spacing: 3) {
-                Text(wallLabel)
+                Text(WatchGymMap(wall: wall, highlightedID: pin.id).placeCue)
                     .font(.caption2.bold())
-                    .foregroundStyle(wall.name == "Untitled" ? Color.orange : Color.white)
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     logButton("Flashed", color: .yellow) {
@@ -159,9 +152,5 @@ struct WatchBoulderDetail: View {
                 .background(color, in: Capsule())
         }
         .buttonStyle(.plain)
-    }
-
-    private var wallLabel: String {
-        wall.name == "Untitled" ? "Unnamed wall" : wall.name
     }
 }
