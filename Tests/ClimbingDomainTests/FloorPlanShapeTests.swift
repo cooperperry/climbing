@@ -404,4 +404,20 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertEqual(simplified[0].x, 0, accuracy: 1e-9)
         XCTAssertEqual(simplified[1].x, 1, accuracy: 1e-9)
     }
+
+    func testPinAnglePointsUpOffAHorizontalWall() {
+        let angle = FloorPlanMath.pinAngle(
+            perpendicularToSegmentFrom: PlanPoint(x: 0.2, y: 0.5),
+            to: PlanPoint(x: 0.8, y: 0.5)
+        )
+        XCTAssertEqual(angle, 0, accuracy: 1e-6)
+    }
+
+    func testPinAnglePointsLeftOffAVerticalWall() {
+        let angle = FloorPlanMath.pinAngle(
+            perpendicularToSegmentFrom: PlanPoint(x: 0.4, y: 0.2),
+            to: PlanPoint(x: 0.4, y: 0.8)
+        )
+        XCTAssertEqual(angle, -.pi / 2, accuracy: 1e-6)
+    }
 }

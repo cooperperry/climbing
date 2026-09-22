@@ -695,6 +695,19 @@ public enum FloorPlanMath {
         }
     }
 
+    /// Clockwise radians so a pin's head points perpendicular to the segment, preferring up.
+    /// Zero is straight up. Screen y grows downward.
+    public static func pinAngle(perpendicularToSegmentFrom start: PlanPoint, to end: PlanPoint) -> Double {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let length = hypot(dx, dy)
+        guard length > 1e-9 else { return 0 }
+        let left = (x: -dy / length, y: dx / length)
+        let right = (x: dy / length, y: -dx / length)
+        let normal = left.y < right.y ? left : (right.y < left.y ? right : (left.x <= right.x ? left : right))
+        return atan2(normal.x, -normal.y)
+    }
+
     /// Lay out `count` points in a circle using existing pins for center/radius when possible.
     public static func circleLayout(
         existing: [PlanPoint],

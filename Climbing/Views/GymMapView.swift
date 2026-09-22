@@ -1129,16 +1129,23 @@ struct GymMapView: View {
             : "Added \(lines.count) walls from the sketch. Drag corners if a line needs a fix."
     }
 
-    /// Clockwise angle that puts this pin's head on the circle around the shared tip.
+    /// One or two pins point straight out from the wall. Three or more share a fan.
     private func pinTipAngle(for route: GymRoute) -> Angle {
-        guard let key = route.groupKey else { return .zero }
-        let mates = allFloorRoutes()
-            .filter { $0.groupKey == key }
-            .sorted { $0.createdAt < $1.createdAt }
-        guard mates.count > 1,
-              let index = mates.firstIndex(where: { $0.id == route.id })
+        if let key = route.groupKey {
+            let mates = allFloorRoutes()
+                .filter { $0.groupKey == key }
+                .sorted { $0.createdAt < $1.createdAt }
+            if mates.count >= 3, let index = mates.firstIndex(where: { $0.id == route.id }) {
+                return .radians(FloorPlanMath.clusterAngles(count: mates.count)[index])
+            }
+        }
+        guard let wall = route.wall else { return .zero }
+        let points = wall.floorPlanPoints()
+        let here = PlanPoint(x: route.x, y: route.y)
+        guard let index = FloorPlanMath.nearestSegmentIndex(in: points, closed: wall.shapeClosed, to: here),
+              let (start, end) = FloorPlanMath.segmentEndpoints(points: points, closed: wall.shapeClosed, index: index)
         else { return .zero }
-        return .radians(FloorPlanMath.clusterAngles(count: mates.count)[index])
+        return .radians(FloorPlanMath.pinAngle(perpendicularToSegmentFrom: start, to: end))
     }
 
     private func allFloorRoutes() -> [GymRoute] {
