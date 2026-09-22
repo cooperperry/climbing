@@ -849,8 +849,6 @@ struct GymMapView: View {
             )
             .opacity(merging ? 0.94 : 1.0)
             .position(pixel(pos, in: size))
-            .animation(isDragging ? nil : Self.routeSpring, value: route.x)
-            .animation(isDragging ? nil : Self.routeSpring, value: route.y)
             .animation(Self.routeSpring, value: merging)
             .animation(Self.routeSpring, value: isTarget)
             .animation(Self.routeSpring, value: tipAngle)
@@ -1000,12 +998,14 @@ struct GymMapView: View {
                 let finger = normalized(value.location, in: board)
                 if routeDragSession.routeID != route.id {
                     routeDragSession.beginTracking(route, finger: finger)
+                    draggingRouteID = route.id
                     scheduleClusterHold(for: route, session: routeDragSession)
                 }
                 routeDragSession.lastFinger = finger
                 let start = routeDragSession.fingerStart ?? finger
                 let slop = 16 / max(effectiveZoom, 0.5) / max(board.width, 1)
-                if FloorPlanMath.distance(finger, start) > slop {
+                if routeDragSession.holdArmed, FloorPlanMath.distance(finger, start) > slop {
+                    routeDragSession.holdArmed = false
                     routeDragSession.cancelHold()
                 }
 
@@ -1019,7 +1019,6 @@ struct GymMapView: View {
                     return
                 }
 
-                draggingRouteID = route.id
                 var tip = PlanPoint(
                     x: finger.x + routeDragSession.grabDeltaX,
                     y: finger.y + routeDragSession.grabDeltaY
@@ -2102,6 +2101,7 @@ private final class RouteDragSession {
     var groupKey: String?
     var clusterOrigins: [UUID: PlanPoint] = [:]
     var holdToken = 0
+    var holdArmed = false
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
     func beginTracking(_ route: GymRoute, finger: PlanPoint) {
@@ -2117,10 +2117,12 @@ private final class RouteDragSession {
         groupKey = nil
         clusterOrigins = [:]
         holdToken += 1
+        holdArmed = true
         haptic.prepare()
     }
 
     func cancelHold() {
+        holdArmed = false
         holdToken += 1
     }
 
@@ -2146,6 +2148,7 @@ private final class RouteDragSession {
         movingCluster = false
         groupKey = nil
         clusterOrigins = [:]
+        holdArmed = false
         holdToken += 1
     }
 }
