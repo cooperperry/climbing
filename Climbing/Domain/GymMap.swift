@@ -573,15 +573,49 @@ public enum FloorPlanMath {
         around center: PlanPoint,
         existing: [PlanPoint]
     ) -> [PlanPoint] {
+        dragMergedSemiCircle(count: count, around: center, existing: existing)
+    }
+
+    /// Upper semi-circle of map pins (screen y-down: arc goes left → up → right).
+    /// Sweep is slightly inset from a flat diameter so a 2-pin merge still fans upward.
+    public static func semiCircleSlots(
+        count: Int,
+        center: PlanPoint,
+        radius: Double,
+        startAngle: Double = .pi + 0.4,
+        sweep: Double = .pi - 0.8
+    ) -> [PlanPoint] {
+        guard count > 0 else { return [] }
+        let r = max(radius, 0.03)
+        if count == 1 {
+            let angle = startAngle + sweep / 2
+            return [PlanPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * r)]
+        }
+        return (0 ..< count).map { index in
+            let t = Double(index) / Double(count - 1)
+            let angle = startAngle + sweep * t
+            return PlanPoint(
+                x: center.x + cos(angle) * r,
+                y: center.y + sin(angle) * r
+            )
+        }
+    }
+
+    /// Semi-circle cluster used when two route pins snap together.
+    public static func dragMergedSemiCircle(
+        count: Int,
+        around center: PlanPoint,
+        existing: [PlanPoint]
+    ) -> [PlanPoint] {
         guard count > 0 else { return [] }
         let radius: Double
         if existing.count >= 2 {
             let mean = existing.map { distance($0, center) }.reduce(0, +) / Double(existing.count)
-            radius = max(0.045, mean)
+            radius = max(0.04, mean)
         } else {
-            radius = max(0.05, 0.035 + Double(count) * 0.012)
+            radius = max(0.048, 0.032 + Double(count) * 0.014)
         }
-        return circleSlots(count: count, center: center, radius: radius)
+        return semiCircleSlots(count: count, center: center, radius: radius)
     }
 
     /// Lay out `count` points in a circle using existing pins for center/radius when possible.

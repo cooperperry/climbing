@@ -139,7 +139,7 @@ struct GymMapView: View {
             }
         }
         if selectedWall != nil {
-            return "Tap Routes to set climbs. Drag grade tags together to merge them into a ring."
+            return "Tap Routes to set climbs. Drag one pin onto another to merge those two."
         }
         return "Pinch to zoom, drag to pan. Tap a wall to select it."
     }
@@ -723,43 +723,32 @@ struct GymMapView: View {
             let merging = mergingRouteIDs.contains(route.id)
             let isTarget = mergeTargetRouteID == route.id
             let isDragging = draggingRouteID == route.id
-            Text(route.grade)
-                .font(.caption2.bold())
-                .foregroundStyle(route.holdColor.prefersDarkLabel ? Color.black : Color.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(Color(hold: route.holdColor), in: Capsule())
-                .overlay {
-                    Capsule().strokeBorder(
-                        isDragging || isTarget || merging
-                            ? Color.stravaOrange
-                            : Color.white.opacity(0.85),
-                        lineWidth: isDragging || isTarget || merging ? 2 : 1
-                    )
-                }
-                .shadow(
-                    color: .black.opacity(merging || isTarget ? 0.18 : 0.35),
-                    radius: merging || isTarget ? 5 : 2,
-                    y: merging || isTarget ? 2 : 1
-                )
-                .scaleEffect(
-                    isTarget ? 1.08
-                        : merging ? 0.92
-                        : isDragging ? 1.06
-                        : 1.0
-                )
-                .opacity(merging ? 0.92 : 1.0)
-                .position(pixel(pos, in: size))
-                .animation(Self.routeSpring, value: route.x)
-                .animation(Self.routeSpring, value: route.y)
-                .animation(Self.routeSpring, value: merging)
-                .animation(Self.routeSpring, value: isTarget)
-                .highPriorityGesture(routeDrag(route, in: size))
+            RouteMapPin(
+                grade: route.grade,
+                holdColor: route.holdColor,
+                highlighted: isDragging || isTarget || merging
+            )
+            .frame(width: 30, height: 38)
+            // Tip of the pin sits on the board coordinate (Google Maps style).
+            .offset(y: -19)
+            .scaleEffect(
+                isTarget ? 1.12
+                    : merging ? 0.9
+                    : isDragging ? 1.1
+                    : 1.0
+            )
+            .opacity(merging ? 0.94 : 1.0)
+            .position(pixel(pos, in: size))
+            .animation(Self.routeSpring, value: route.x)
+            .animation(Self.routeSpring, value: route.y)
+            .animation(Self.routeSpring, value: merging)
+            .animation(Self.routeSpring, value: isTarget)
+            .highPriorityGesture(routeDrag(route, in: size))
         }
     }
 
     private static var routeSpring: Animation {
-        .spring(response: 0.48, dampingFraction: 0.86)
+        .spring(response: 0.4, dampingFraction: 0.52)
     }
 
     @ViewBuilder
@@ -908,35 +897,25 @@ struct GymMapView: View {
         return best?.0
     }
 
-    /// Drag two (or more) route tags together → shared group, spring into a small ring.
+    /// Drag one pin onto another → only those two snap into a semi-circle fan.
     private func snapMergeRoutes(dragged: GymRoute, onto target: GymRoute) {
+        guard dragged.id != target.id else { return }
         let host = target.wall ?? dragged.wall
-        let key = target.groupKey ?? dragged.groupKey ?? UUID().uuidString
+        let key = UUID().uuidString
 
-        var cluster = allFloorRoutes().filter { route in
-            if route.id == dragged.id || route.id == target.id { return true }
-            if let g = route.groupKey, g == key { return true }
-            if let g = dragged.groupKey, g == route.groupKey { return true }
-            if let g = target.groupKey, g == route.groupKey { return true }
-            return false
-        }
-        // De-dupe by id
-        var seen = Set<UUID>()
-        cluster = cluster.filter { seen.insert($0.id).inserted }
+        dragged.wall = host
+        target.wall = host
+        dragged.groupKey = key
+        target.groupKey = key
 
-        for route in cluster {
-            route.wall = host
-            route.groupKey = key
-        }
-
-        let sorted = cluster.sorted { $0.createdAt < $1.createdAt }
-        let existing = sorted.map { PlanPoint(x: $0.x, y: $0.y) }
+        let pair = [dragged, target].sorted { $0.createdAt < $1.createdAt }
         let center = PlanPoint(
             x: (dragged.x + target.x) / 2,
             y: (dragged.y + target.y) / 2
         )
-        let slots = FloorPlanMath.dragMergedCircle(
-            count: sorted.count,
+        let existing = pair.map { PlanPoint(x: $0.x, y: $0.y) }
+        let slots = FloorPlanMath.dragMergedSemiCircle(
+            count: pair.count,
             around: center,
             existing: existing
         )
@@ -944,7 +923,7 @@ struct GymMapView: View {
             selectedWall = host
             if routesWall != nil { routesWall = host }
         }
-        animateRouteLayout(sorted, to: slots)
+        animateRouteLayout(pair, to: slots)
     }
 
     private func addSegmentDrag(wall: GymArea, in size: CGSize, fromStart: Bool) -> some Gesture {
@@ -1497,7 +1476,7 @@ struct GymMapView: View {
                     ClimberIdentity.name = value
                 }
 
-            Text("Drag two grade tags together to merge them into a ring. They ease into place.")
+            Text("Drag one pin onto another to merge just those two into a semi-circle.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1713,5 +1692,68 @@ struct GymMapView: View {
         }
         try? context.save()
         if logGrade == nil { logGrade = scale?.grades.first }
+    }
+}
+
+/// Google Maps–style teardrop pin with the V-grade in the head.
+private struct RouteMapPin: View {
+    var grade: String
+    var holdColor: HoldColor
+    var highlighted: Bool = false
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            MapPinShape()
+                .fill(Color(hold: holdColor))
+                .overlay {
+                    MapPinShape()
+                        .strokeBorder(
+                            highlighted ? Color.stravaOrange : Color.white.opacity(0.9),
+                            lineWidth: highlighted ? 2 : 1
+                        )
+                }
+                .shadow(color: .black.opacity(0.35), radius: highlighted ? 4 : 2, y: 1)
+
+            Text(grade)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(holdColor.prefersDarkLabel ? Color.black : Color.white)
+                .padding(.top, 7)
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+        }
+        .accessibilityLabel(grade)
+    }
+}
+
+/// Classic map-pin silhouette: round head, pointed tip at the bottom center.
+private struct MapPinShape: InsettableShape {
+    var insetAmount: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let r = rect.insetBy(dx: insetAmount, dy: insetAmount)
+        let w = r.width
+        let h = r.height
+        let cx = r.midX
+        let headRadius = min(w, h * 0.62) / 2
+        let headCenterY = r.minY + headRadius
+        let tipY = r.maxY
+        let neckY = headCenterY + headRadius * 0.55
+
+        var path = Path()
+        path.addArc(
+            center: CGPoint(x: cx, y: headCenterY),
+            radius: headRadius,
+            startAngle: .degrees(200),
+            endAngle: .degrees(-20),
+            clockwise: false
+        )
+        path.addLine(to: CGPoint(x: cx, y: tipY))
+        path.addLine(to: CGPoint(x: cx - headRadius * 0.72, y: neckY))
+        path.closeSubpath()
+        return path
+    }
+
+    func inset(by amount: CGFloat) -> MapPinShape {
+        MapPinShape(insetAmount: insetAmount + amount)
     }
 }

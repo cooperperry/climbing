@@ -219,12 +219,30 @@ final class FloorPlanShapeTests: XCTestCase {
         XCTAssertLessThan(pulled.x, toward.x)
     }
 
+    func testSemiCircleSlotsAreUpperArc() {
+        let center = PlanPoint(x: 0.5, y: 0.5)
+        let slots = FloorPlanMath.semiCircleSlots(count: 3, center: center, radius: 0.1)
+        XCTAssertEqual(slots.count, 3)
+        // Ends fan left/right; middle sits above the center.
+        XCTAssertLessThan(slots[0].x, center.x)
+        XCTAssertGreaterThan(slots[2].x, center.x)
+        XCTAssertLessThan(slots[1].y, center.y)
+        for slot in slots {
+            XCTAssertLessThan(slot.y, center.y + 1e-6)
+        }
+    }
+
     func testDragMergedCircleGrowsWithCount() {
         let center = PlanPoint(x: 0.5, y: 0.5)
-        let two = FloorPlanMath.dragMergedCircle(count: 2, around: center, existing: [])
-        let five = FloorPlanMath.dragMergedCircle(count: 5, around: center, existing: [])
+        let two = FloorPlanMath.dragMergedSemiCircle(count: 2, around: center, existing: [])
+        let five = FloorPlanMath.dragMergedSemiCircle(count: 5, around: center, existing: [])
         XCTAssertEqual(two.count, 2)
         XCTAssertEqual(five.count, 5)
+        XCTAssertLessThan(two[0].x, center.x)
+        XCTAssertGreaterThan(two[1].x, center.x)
+        XCTAssertLessThan(two[0].y, center.y)
+        XCTAssertLessThan(two[1].y, center.y)
+        XCTAssertLessThan(five[2].y, center.y)
         let r2 = FloorPlanMath.distance(two[0], center)
         let r5 = FloorPlanMath.distance(five[0], center)
         XCTAssertGreaterThan(r5, r2)
