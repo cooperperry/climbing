@@ -1048,11 +1048,7 @@ struct GymMapView: View {
 
     private func handleBrowseTap(at point: PlanPoint) {
         if let hit = hitTest(point) {
-            if selectedWall?.id == hit.id {
-                openRoutes(for: hit)
-            } else {
-                selectWall(hit)
-            }
+            selectWall(hit)
         } else {
             applyRename(to: selectedWall)
             selectedWall = nil
