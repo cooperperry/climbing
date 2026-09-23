@@ -83,6 +83,7 @@ struct GymMapView: View {
     @State private var showUnlockFloor = false
     @State private var traceMessage: String?
     @State private var didCenterMap = false
+    @State private var underlayImage: UIImage?
 
     private var scale: CustomGradeScale? {
         let kind: GradeScaleKind = logDiscipline.usesRopeGrades ? .yds : .boulderVScale
@@ -251,6 +252,7 @@ struct GymMapView: View {
             if gym.currentFloorName == nil {
                 gym.currentFloorName = "Main"
             }
+            refreshUnderlayImage()
         }
         .onChange(of: logDiscipline) { _, _ in
             logGrade = scale?.grades.first
@@ -267,6 +269,7 @@ struct GymMapView: View {
                 if let data = try? await item.loadTransferable(type: Data.self) {
                     await MainActor.run {
                         gym.mapImageData = data
+                        refreshUnderlayImage()
                         persistMap()
                     }
                 }
@@ -537,6 +540,7 @@ struct GymMapView: View {
                 if gym.mapImageData != nil {
                     Button("Clear underlay", role: .destructive) {
                         gym.mapImageData = nil
+                        underlayImage = nil
                         photoPickerItem = nil
                         persistMap()
                     }
@@ -636,8 +640,8 @@ struct GymMapView: View {
             ZStack {
                 Color.black
 
-                if let data = gym.mapImageData, let image = UIImage(data: data) {
-                    Image(uiImage: image)
+                if let underlayImage {
+                    Image(uiImage: underlayImage)
                         .resizable()
                         .scaledToFit()
                         .opacity(gym.underlayOpacity)
@@ -697,8 +701,12 @@ struct GymMapView: View {
     }
 
     private func gridOverlay(in size: CGSize) -> some View {
-        let step = FloorPlanMath.gridStep
         let bounds = visibleBoardBounds(in: size)
+        let span = max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
+        var step = FloorPlanMath.gridStep
+        if span / step > 40 {
+            step = span / 40
+        }
         return Path { path in
             var x = (bounds.minX / step).rounded(.down) * step
             while x <= bounds.maxX + 1e-9 {
@@ -715,6 +723,14 @@ struct GymMapView: View {
         }
         .stroke(Color.white.opacity(0.12), lineWidth: 1)
         .allowsHitTesting(false)
+    }
+
+    private func refreshUnderlayImage() {
+        guard let data = gym.mapImageData else {
+            underlayImage = nil
+            return
+        }
+        underlayImage = UIImage(data: data)
     }
 
     /// Board rectangle currently on screen, so the grid covers the view instead of the old 0...1 box.
