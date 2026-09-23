@@ -24,7 +24,7 @@ final class ClimbGym {
     var scanModelData: Data?
     /// File name of the cleaned climbing-wall model in Application Support.
     var scanFileName: String?
-    /// 3 means the saved file is a solid paneled climbing wall.
+    /// 4 means the saved file is flat climbing panels, not a smoothed scan.
     var scanRevision: Int = 0
     /// Routes placed on the cleaned wall, encoded as `[WallRoutePin]`.
     var wallRoutesData: Data?

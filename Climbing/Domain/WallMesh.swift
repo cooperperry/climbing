@@ -272,11 +272,10 @@ public enum WallMeshMath {
             filled = closeGaps(filled)
         }
         for _ in 0 ..< 3 {
-            filled = smooth(filled)
+            filled = trimSpurs(filled)
         }
-        for _ in 0 ..< 2 {
-            filled = flattenPanels(filled)
-        }
+        filled = smooth(filled)
+        filled = constructPanels(filled)
         let shell = ground(panel(from: filled, originX: minX, originY: minY, cell: cell))
         return thicken(shell, depth: 0.1)
     }
@@ -378,21 +377,100 @@ public enum WallMeshMath {
         return (negative, positive)
     }
 
-    /// Snap nearly flat neighborhoods onto a plane so the surface reads as panels, not scan noise.
-    private static func flattenPanels(_ grid: [CellKey: Double]) -> [CellKey: Double] {
-        var next = grid
-        for cell in grid.keys {
-            var samples: [(Double, Double, Double)] = []
-            for dy in -2 ... 2 {
-                for dx in -2 ... 2 {
-                    guard let z = grid[CellKey(x: cell.x + dx, y: cell.y + dy)] else { continue }
-                    samples.append((Double(dx), Double(dy), z))
+    /// Turn scan ripple into a few flat sheets, and a real bulge into a flat volume.
+    private static func constructPanels(_ grid: [CellKey: Double]) -> [CellKey: Double] {
+        var remaining = grid
+        var planes: [(a: Double, b: Double, c: Double)] = []
+        var assigned: [CellKey: Double] = [:]
+        while remaining.count >= 12 {
+            let samples = remaining.map { (Double($0.key.x), Double($0.key.y), $0.value) }
+            guard let plane = fitPlane(samples) else { break }
+            var inliers: [CellKey: Double] = [:]
+            for (cell, z) in remaining {
+                let predicted = plane.a * Double(cell.x) + plane.b * Double(cell.y) + plane.c
+                if abs(predicted - z) <= 0.05 {
+                    inliers[cell] = predicted
                 }
             }
-            guard samples.count >= 8, let plane = fitPlane(samples), plane.residual < 0.045 else { continue }
-            next[cell] = plane.c
+            if inliers.count < 12 { break }
+            planes.append((plane.a, plane.b, plane.c))
+            for (cell, z) in inliers {
+                assigned[cell] = z
+                remaining.removeValue(forKey: cell)
+            }
         }
-        return next
+        guard planes.isEmpty == false else { return grid }
+
+        var caps: [CellKey: Double] = [:]
+        for (cell, z) in remaining {
+            var nearest = planes[0]
+            var error = Double.greatestFiniteMagnitude
+            for plane in planes {
+                let predicted = plane.a * Double(cell.x) + plane.b * Double(cell.y) + plane.c
+                let delta = abs(predicted - z)
+                if delta < error {
+                    error = delta
+                    nearest = plane
+                }
+            }
+            if error <= 0.08 {
+                assigned[cell] = nearest.a * Double(cell.x) + nearest.b * Double(cell.y) + nearest.c
+            } else {
+                caps[cell] = z
+            }
+        }
+
+        var seen: Set<CellKey> = []
+        let orthogonal = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        for start in caps.keys where seen.contains(start) == false {
+            var cluster: [CellKey] = []
+            var queue = [start]
+            seen.insert(start)
+            while let cell = queue.popLast() {
+                cluster.append(cell)
+                for step in orthogonal {
+                    let next = CellKey(x: cell.x + step.0, y: cell.y + step.1)
+                    if caps[next] != nil, seen.insert(next).inserted {
+                        queue.append(next)
+                    }
+                }
+            }
+            if cluster.count >= 8 {
+                let heights = cluster.compactMap { caps[$0] }.sorted()
+                let cap = heights[heights.count / 2]
+                for cell in cluster { assigned[cell] = cap }
+            } else {
+                for cell in cluster {
+                    let z = caps[cell] ?? 0
+                    var best = planes[0]
+                    var error = Double.greatestFiniteMagnitude
+                    for plane in planes {
+                        let predicted = plane.a * Double(cell.x) + plane.b * Double(cell.y) + plane.c
+                        let delta = abs(predicted - z)
+                        if delta < error {
+                            error = delta
+                            best = plane
+                        }
+                    }
+                    assigned[cell] = best.a * Double(cell.x) + best.b * Double(cell.y) + best.c
+                }
+            }
+        }
+        return assigned
+    }
+
+    /// Remove one-cell whiskers left by the scanner.
+    private static func trimSpurs(_ grid: [CellKey: Double]) -> [CellKey: Double] {
+        let orthogonal = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        var next: [CellKey: Double] = [:]
+        for (cell, z) in grid {
+            var neighbors = 0
+            for step in orthogonal where grid[CellKey(x: cell.x + step.0, y: cell.y + step.1)] != nil {
+                neighbors += 1
+            }
+            if neighbors >= 2 { next[cell] = z }
+        }
+        return next.isEmpty ? grid : next
     }
 
     private static func fitPlane(_ samples: [(Double, Double, Double)]) -> (a: Double, b: Double, c: Double, residual: Double)? {
