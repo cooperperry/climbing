@@ -225,6 +225,7 @@ struct GymScanARRepresentable: UIViewRepresentable {
 
         private func refresh(_ session: ARSession) {
             let meshes = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
+            let count = meshes.count
             DispatchQueue.main.async {
                 GymScanSessionStore.shared.anchors = meshes
                 self.surfaceCount.wrappedValue = count
