@@ -1,9 +1,8 @@
 import ARKit
-import MetalKit
-import ModelIO
 import RealityKit
 import SceneKit
 import SwiftUI
+import UIKit
 
 enum GymScanSupport {
     static var isAvailable: Bool {
@@ -11,28 +10,50 @@ enum GymScanSupport {
     }
 }
 
-enum GymScanExportError: Error {
+enum GymScanExportError: LocalizedError {
     case empty
-    case noDevice
+    case writeFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .empty:
+            return "The scan didn't have enough of the walls yet. Walk a bit closer and try again."
+        case .writeFailed:
+            return "The walls were scanned, but the model file couldn't be written. Try saving again."
+        }
+    }
+}
+
+struct GymScanMesh {
+    var positions: [SIMD3<Float>]
+    var indices: [UInt32]
 }
 
 /// Merges the live LiDAR mesh into a USDZ model of the room's surfaces.
 enum GymScanExporter {
-    static func usdzData(from anchors: [ARMeshAnchor]) throws -> Data {
+    /// Copy the mesh out of ARKit immediately. Those buffers are not safe to read later on another queue.
+    static func snapshot(from anchors: [ARMeshAnchor]) -> GymScanMesh {
         var positions: [SIMD3<Float>] = []
         var indices: [UInt32] = []
         for anchor in anchors {
             let geometry = anchor.geometry
+            let vertexCount = geometry.vertices.count
+            guard vertexCount > 0 else { continue }
             let base = UInt32(positions.count)
-            for index in 0 ..< geometry.vertices.count {
+            let transform = anchor.transform
+            for index in 0 ..< vertexCount {
                 let local = vertex(geometry.vertices, at: index)
-                let world = anchor.transform * SIMD4<Float>(local.x, local.y, local.z, 1)
+                let world = transform * SIMD4<Float>(local.x, local.y, local.z, 1)
                 positions.append(SIMD3(world.x, world.y, world.z))
             }
-            appendFaces(geometry.faces, base: base, into: &indices)
+            appendFaces(geometry.faces, base: base, vertexCount: vertexCount, into: &indices)
         }
-        guard positions.count >= 3, indices.count >= 3 else { throw GymScanExportError.empty }
-        return try writeUSDZ(positions: positions, indices: indices)
+        return GymScanMesh(positions: positions, indices: indices)
+    }
+
+    static func usdzData(from mesh: GymScanMesh) throws -> Data {
+        guard mesh.positions.count >= 3, mesh.indices.count >= 3 else { throw GymScanExportError.empty }
+        return try writeUSDZ(positions: mesh.positions, indices: mesh.indices)
     }
 
     private static func vertex(_ source: ARGeometrySource, at index: Int) -> SIMD3<Float> {
@@ -41,60 +62,83 @@ enum GymScanExporter {
         return SIMD3(floats[0], floats[1], floats[2])
     }
 
-    private static func appendFaces(_ element: ARGeometryElement, base: UInt32, into indices: inout [UInt32]) {
+    private static func appendFaces(
+        _ element: ARGeometryElement,
+        base: UInt32,
+        vertexCount: Int,
+        into indices: inout [UInt32]
+    ) {
         let perFace = element.indexCountPerPrimitive
-        let total = element.count * perFace
+        guard perFace == 3 else { return }
         let raw = element.buffer.contents()
-        for index in 0 ..< total {
-            let offset = index * element.bytesPerIndex
-            let value: UInt32
-            if element.bytesPerIndex == MemoryLayout<UInt16>.size {
-                value = UInt32(raw.load(fromByteOffset: offset, as: UInt16.self))
-            } else {
-                value = raw.load(fromByteOffset: offset, as: UInt32.self)
+        for face in 0 ..< element.count {
+            var corners: [UInt32] = []
+            corners.reserveCapacity(3)
+            for corner in 0 ..< 3 {
+                let offset = ((face * perFace) + corner) * element.bytesPerIndex
+                let value: UInt32
+                if element.bytesPerIndex == MemoryLayout<UInt16>.size {
+                    value = UInt32(raw.load(fromByteOffset: offset, as: UInt16.self))
+                } else {
+                    value = raw.load(fromByteOffset: offset, as: UInt32.self)
+                }
+                corners.append(value)
             }
-            indices.append(base + value)
+            guard corners.allSatisfy({ Int($0) < vertexCount }) else { continue }
+            indices.append(contentsOf: corners.map { base + $0 })
         }
     }
 
     private static func writeUSDZ(positions: [SIMD3<Float>], indices: [UInt32]) throws -> Data {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw GymScanExportError.noDevice }
-        let allocator = MTKMeshBufferAllocator(device: device)
-        let vertexData = positions.withUnsafeBytes { Data($0) }
-        let indexData = indices.withUnsafeBytes { Data($0) }
-        let vertexBuffer = allocator.newBuffer(with: vertexData, type: .vertex)
-        let indexBuffer = allocator.newBuffer(with: indexData, type: .index)
+        let vertices = positions.map { SCNVector3($0.x, $0.y, $0.z) }
+        let normals = normals(positions: positions, indices: indices).map { SCNVector3($0.x, $0.y, $0.z) }
+        let sources = [
+            SCNGeometrySource(vertices: vertices),
+            SCNGeometrySource(normals: normals)
+        ]
+        let used = (indices.count / 3) * 3
+        let indexData = indices.prefix(used).withUnsafeBufferPointer { Data(buffer: $0) }
+        let element = SCNGeometryElement(
+            data: indexData,
+            primitiveType: .triangles,
+            primitiveCount: used / 3,
+            bytesPerIndex: MemoryLayout<UInt32>.size
+        )
+        let geometry = SCNGeometry(sources: sources, elements: [element])
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor(white: 0.78, alpha: 1)
+        material.isDoubleSided = true
+        geometry.materials = [material]
 
-        let material = MDLMaterial(name: "wall", scatteringFunction: MDLPhysicallyPlausibleScatteringFunction())
-        material.setProperty(MDLMaterialProperty(name: "baseColor", semantic: .baseColor, float3: SIMD3<Float>(0.72, 0.74, 0.78)))
-        let submesh = MDLSubmesh(
-            indexBuffer: indexBuffer,
-            indexCount: indices.count,
-            indexType: .uInt32,
-            geometryType: .triangles,
-            material: material
-        )
-
-        let descriptor = MDLVertexDescriptor()
-        descriptor.attributes[0] = MDLVertexAttribute(
-            name: MDLVertexAttributePosition,
-            format: .float3,
-            offset: 0,
-            bufferIndex: 0
-        )
-        descriptor.layouts[0] = MDLVertexBufferLayout(stride: MemoryLayout<SIMD3<Float>>.stride)
-        let mesh = MDLMesh(
-            vertexBuffer: vertexBuffer,
-            vertexCount: positions.count,
-            descriptor: descriptor,
-            submeshes: [submesh]
-        )
-        let asset = MDLAsset(bufferAllocator: allocator)
-        asset.add(mesh)
+        let scene = SCNScene()
+        scene.rootNode.addChildNode(SCNNode(geometry: geometry))
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("gym-scan-\(UUID().uuidString).usdz")
-        try asset.export(to: url)
+        let wrote = scene.write(to: url, options: nil, delegate: nil, progressHandler: nil)
         defer { try? FileManager.default.removeItem(at: url) }
-        return try Data(contentsOf: url)
+        guard wrote else { throw GymScanExportError.writeFailed }
+        let data = try Data(contentsOf: url)
+        guard data.isEmpty == false else { throw GymScanExportError.writeFailed }
+        return data
+    }
+
+    private static func normals(positions: [SIMD3<Float>], indices: [UInt32]) -> [SIMD3<Float>] {
+        var accumulated = Array(repeating: SIMD3<Float>.zero, count: positions.count)
+        var index = 0
+        while index + 2 < indices.count {
+            let a = Int(indices[index])
+            let b = Int(indices[index + 1])
+            let c = Int(indices[index + 2])
+            index += 3
+            guard a < positions.count, b < positions.count, c < positions.count else { continue }
+            let face = simd_cross(positions[b] - positions[a], positions[c] - positions[a])
+            accumulated[a] += face
+            accumulated[b] += face
+            accumulated[c] += face
+        }
+        return accumulated.map { value in
+            let length = simd_length(value)
+            return length > 0.00001 ? value / length : SIMD3<Float>(0, 1, 0)
+        }
     }
 }
 
@@ -154,17 +198,17 @@ struct GymScanCaptureView: View {
 
     private func save() {
         isSaving = true
-        let anchors = GymScanSessionStore.shared.anchors
+        let mesh = GymScanExporter.snapshot(from: GymScanSessionStore.shared.anchors)
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = Result { try GymScanExporter.usdzData(from: anchors) }
+            let result = Result { try GymScanExporter.usdzData(from: mesh) }
             DispatchQueue.main.async {
                 isSaving = false
                 switch result {
                 case .success(let data):
                     onSave(data)
                     dismiss()
-                case .failure:
-                    saveError = "The scan didn't have enough of the walls yet. Walk a bit closer and try again."
+                case .failure(let error):
+                    saveError = error.localizedDescription
                 }
             }
         }
@@ -254,7 +298,9 @@ private struct GymScanSceneView: UIViewRepresentable {
         view.backgroundColor = .black
         view.autoenablesDefaultLighting = true
         view.allowsCameraControl = true
-        view.scene = scene(from: data)
+        let loaded = scene(from: data)
+        view.scene = loaded
+        frameCamera(on: loaded, in: view)
         return view
     }
 
@@ -271,5 +317,48 @@ private struct GymScanSceneView: UIViewRepresentable {
             try? FileManager.default.removeItem(at: url)
             return SCNScene()
         }
+    }
+
+    private func frameCamera(on scene: SCNScene, in view: SCNView) {
+        var minP = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var maxP = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var found = false
+        var nodes = [scene.rootNode]
+        scene.rootNode.enumerateChildNodes { node, _ in
+            nodes.append(node)
+        }
+        for node in nodes {
+            guard node.geometry != nil else { continue }
+            let (localMin, localMax) = node.boundingBox
+            let corners = [
+                SCNVector3(localMin.x, localMin.y, localMin.z),
+                SCNVector3(localMax.x, localMin.y, localMin.z),
+                SCNVector3(localMin.x, localMax.y, localMin.z),
+                SCNVector3(localMax.x, localMax.y, localMin.z),
+                SCNVector3(localMin.x, localMin.y, localMax.z),
+                SCNVector3(localMax.x, localMin.y, localMax.z),
+                SCNVector3(localMin.x, localMax.y, localMax.z),
+                SCNVector3(localMax.x, localMax.y, localMax.z)
+            ]
+            for corner in corners {
+                let world = node.convertPosition(corner, to: nil)
+                found = true
+                minP = simd_min(minP, SIMD3(world.x, world.y, world.z))
+                maxP = simd_max(maxP, SIMD3(world.x, world.y, world.z))
+            }
+        }
+        guard found else { return }
+        let center = (minP + maxP) * 0.5
+        let span = max(maxP.x - minP.x, max(maxP.y - minP.y, maxP.z - minP.z))
+        let distance = max(span * 1.4, 0.5)
+        let cameraNode = SCNNode()
+        let camera = SCNCamera()
+        camera.zNear = 0.01
+        camera.zFar = Double(distance) * 20
+        cameraNode.camera = camera
+        cameraNode.position = SCNVector3(center.x, center.y + span * 0.35, center.z + distance)
+        cameraNode.look(at: SCNVector3(center.x, center.y, center.z))
+        scene.rootNode.addChildNode(cameraNode)
+        view.pointOfView = cameraNode
     }
 }
