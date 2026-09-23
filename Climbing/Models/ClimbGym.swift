@@ -24,6 +24,8 @@ final class ClimbGym {
     var scanModelData: Data?
     /// File name of the cleaned climbing-wall model in Application Support.
     var scanFileName: String?
+    /// 2 means the saved file is the solid climbing surface, not the raw room mesh.
+    var scanRevision: Int = 0
     /// Routes placed on the cleaned wall, encoded as `[WallRoutePin]`.
     var wallRoutesData: Data?
 

@@ -231,6 +231,7 @@ struct GymMapView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if hasClimbingWall {
                     Button {
+                        upgradeWallIfNeeded()
                         showScanPreview = true
                     } label: {
                         Image(systemName: "cube")
@@ -275,8 +276,8 @@ struct GymMapView: View {
                         grade: $logGrade,
                         color: $draftColor,
                         discipline: $logDiscipline,
-                        onPlace: { point, normal in
-                            placeWallRoute(at: point, normal: normal)
+                        onStroke: { path, normal in
+                            placeWallRoute(path, normal: normal)
                         },
                         onDelete: { id in
                             gym.wallRoutes = gym.wallRoutes.filter { $0.id != id }
@@ -463,6 +464,7 @@ struct GymMapView: View {
                     if hasClimbingWall {
                         Button("Climbing wall") {
                             showMapSettings = false
+                            upgradeWallIfNeeded()
                             showScanPreview = true
                         }
                     }
@@ -1955,6 +1957,7 @@ struct GymMapView: View {
             return
         }
         gym.scanFileName = gym.id.uuidString
+        gym.scanRevision = 2
         gym.scanModelData = nil
         gym.wallRoutes = []
         do {
@@ -1966,20 +1969,34 @@ struct GymMapView: View {
         openPreviewAfterScan = true
     }
 
-    private func placeWallRoute(at point: MeshPoint, normal: MeshPoint) {
+    private func upgradeWallIfNeeded() {
+        guard gym.scanRevision < 2, let data = GymScanStore.read(gymID: gym.id) else { return }
+        if let refined = GymScanExporter.refine(data) {
+            try? GymScanStore.write(refined, gymID: gym.id)
+            gym.wallRoutes = []
+        }
+        gym.scanRevision = 2
+        gym.scanFileName = gym.id.uuidString
+        persistMap()
+    }
+
+    private func placeWallRoute(_ path: [MeshPoint], normal: MeshPoint) {
+        guard path.count >= 2 else { return }
         let choices = scale?.grades ?? GradeScaleTemplate.standardVScale().grades
         let chosen = logGrade ?? choices.first ?? "V0"
         logGrade = chosen
+        let top = path.max(by: { $0.y < $1.y }) ?? path[0]
         var routes = gym.wallRoutes
         routes.append(WallRoutePin(
             grade: chosen,
             colorName: draftColor.rawValue,
-            x: point.x,
-            y: point.y,
-            z: point.z,
+            x: top.x,
+            y: top.y,
+            z: top.z,
             nx: normal.x,
             ny: normal.y,
-            nz: normal.z
+            nz: normal.z,
+            path: path
         ))
         gym.wallRoutes = routes
         persistMap()

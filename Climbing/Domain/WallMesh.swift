@@ -26,7 +26,8 @@ public struct WallMesh: Equatable, Sendable {
     public var isEmpty: Bool { positions.count < 3 || indices.count < 3 }
 }
 
-/// A route stuck on the cleaned climbing wall, in the wall's own meters.
+/// A route drawn on the cleaned climbing wall, in the wall's own meters.
+/// `path` is the finger stroke. Older pins only have a single point.
 public struct WallRoutePin: Equatable, Sendable, Codable, Identifiable {
     public var id: UUID
     public var grade: String
@@ -37,6 +38,7 @@ public struct WallRoutePin: Equatable, Sendable, Codable, Identifiable {
     public var nx: Double
     public var ny: Double
     public var nz: Double
+    public var path: [MeshPoint]
 
     public init(
         id: UUID = UUID(),
@@ -47,7 +49,8 @@ public struct WallRoutePin: Equatable, Sendable, Codable, Identifiable {
         z: Double,
         nx: Double,
         ny: Double,
-        nz: Double
+        nz: Double,
+        path: [MeshPoint] = []
     ) {
         self.id = id
         self.grade = grade
@@ -58,6 +61,44 @@ public struct WallRoutePin: Equatable, Sendable, Codable, Identifiable {
         self.nx = nx
         self.ny = ny
         self.nz = nz
+        self.path = path
+    }
+
+    public var stroke: [MeshPoint] {
+        if path.count >= 2 { return path }
+        return [MeshPoint(x: x, y: y, z: z)]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, grade, colorName, x, y, z, nx, ny, nz, path
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        grade = try container.decode(String.self, forKey: .grade)
+        colorName = try container.decode(String.self, forKey: .colorName)
+        x = try container.decode(Double.self, forKey: .x)
+        y = try container.decode(Double.self, forKey: .y)
+        z = try container.decode(Double.self, forKey: .z)
+        nx = try container.decode(Double.self, forKey: .nx)
+        ny = try container.decode(Double.self, forKey: .ny)
+        nz = try container.decode(Double.self, forKey: .nz)
+        path = try container.decodeIfPresent([MeshPoint].self, forKey: .path) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(grade, forKey: .grade)
+        try container.encode(colorName, forKey: .colorName)
+        try container.encode(x, forKey: .x)
+        try container.encode(y, forKey: .y)
+        try container.encode(z, forKey: .z)
+        try container.encode(nx, forKey: .nx)
+        try container.encode(ny, forKey: .ny)
+        try container.encode(nz, forKey: .nz)
+        try container.encode(path, forKey: .path)
     }
 }
 
@@ -65,17 +106,15 @@ public struct WallRoutePin: Equatable, Sendable, Codable, Identifiable {
 public enum WallMeshMath {
     /// Faces flatter than this (normal's up-component) are floor or ceiling, not wall.
     static let horizontalCutoff = 0.88
-    /// Scraps smaller than this fraction of the main surface are dropped.
-    static let minimumComponentFraction = 0.15
 
-    public static func climbingWall(from mesh: WallMesh, voxelSize: Double = 0.04) -> WallMesh {
+    /// One solid climbing surface: the wall the phone was facing, with small holes closed.
+    public static func climbingWall(from mesh: WallMesh, voxelSize: Double = 0.05) -> WallMesh {
         let faces = climbableFaces(in: mesh)
-        guard faces.isEmpty == false else { return WallMesh(positions: [], indices: []) }
-        let kept = largestSurface(faces, vertexCount: mesh.positions.count)
-        guard kept.isEmpty == false else { return WallMesh(positions: [], indices: []) }
-        let welded = weld(kept, positions: mesh.positions, voxelSize: max(voxelSize, 0.005))
-        guard welded.isEmpty == false else { return WallMesh(positions: [], indices: []) }
-        return orient(welded)
+        let front = frontFaces(faces, positions: mesh.positions)
+        guard front.isEmpty == false else { return WallMesh(positions: [], indices: []) }
+        let compact = meshFrom(faces: front, positions: mesh.positions)
+        guard compact.isEmpty == false else { return WallMesh(positions: [], indices: []) }
+        return solidWall(from: orient(compact), cell: max(voxelSize, 0.02))
     }
 
     private struct Face {
@@ -109,93 +148,236 @@ public enum WallMeshMath {
         return faces
     }
 
-    /// Keep the main wall and anything still attached to it. Drop floating scraps.
-    private static func largestSurface(_ faces: [Face], vertexCount: Int) -> [Face] {
-        var parent = Array(0 ..< vertexCount)
-        func find(_ start: Int) -> Int {
-            var index = start
-            while parent[index] != index {
-                parent[index] = parent[parent[index]]
-                index = parent[index]
-            }
-            return index
-        }
-        func unite(_ a: Int, _ b: Int) {
-            let left = find(a)
-            let right = find(b)
-            if left != right { parent[right] = left }
-        }
+    /// The surface facing the phone, not the rest of the room or a cabinet in front of it.
+    private static func frontFaces(_ faces: [Face], positions: [MeshPoint]) -> [Face] {
+        guard faces.isEmpty == false else { return [] }
+        let bucketCount = 16
+        var areaByBucket = Array(repeating: 0.0, count: bucketCount)
+        var angles: [Double] = []
+        angles.reserveCapacity(faces.count)
         for face in faces {
-            unite(face.corners.0, face.corners.1)
-            unite(face.corners.1, face.corners.2)
+            let angle = atan2(face.normal.x, face.normal.z)
+            angles.append(angle)
+            areaByBucket[bucket(for: angle, count: bucketCount)] += face.area
         }
-        var areaByRoot: [Int: Double] = [:]
-        for face in faces {
-            let root = find(face.corners.0)
-            areaByRoot[root, default: 0] += face.area
+        guard let winner = areaByBucket.enumerated().max(by: { $0.element < $1.element })?.offset,
+              areaByBucket[winner] > 0 else { return [] }
+        let center = (Double(winner) + 0.5) / Double(bucketCount) * (2 * Double.pi) - Double.pi
+        let dirX = sin(center)
+        let dirZ = cos(center)
+        let limit = 55.0 * Double.pi / 180
+        var aligned: [(Face, Double)] = []
+        for (face, angle) in zip(faces, angles) where angleDelta(angle, center) <= limit {
+            let depth = centroid(of: face, positions: positions, dirX: dirX, dirZ: dirZ)
+            aligned.append((face, depth))
         }
-        let largest = areaByRoot.values.max() ?? 0
-        guard largest > 0 else { return [] }
-        let minimum = largest * minimumComponentFraction
-        return faces.filter { face in
-            (areaByRoot[find(face.corners.0)] ?? 0) >= minimum
+        guard aligned.isEmpty == false else { return [] }
+        let slice = 0.5
+        var areaBySlice: [Int: Double] = [:]
+        for item in aligned {
+            let index = Int(floor(item.1 / slice))
+            areaBySlice[index, default: 0] += item.0.area
+        }
+        guard let bestSlice = areaBySlice.max(by: { $0.value < $1.value })?.key else { return [] }
+        let plane = (Double(bestSlice) + 0.5) * slice
+        return aligned.compactMap { face, depth in
+            abs(depth - plane) <= 0.9 ? face : nil
         }
     }
 
-    private static func weld(_ faces: [Face], positions: [MeshPoint], voxelSize: Double) -> WallMesh {
-        struct Key: Hashable {
-            var x: Int
-            var y: Int
-            var z: Int
-        }
-        var originalSlot: [Int: Int] = [:]
-        var keys: [Key: Int] = [:]
-        var sums: [MeshPoint] = []
-        var counts: [Int] = []
-        func slot(_ original: Int) -> Int {
-            if let existing = originalSlot[original] { return existing }
-            let point = positions[original]
-            let key = Key(
-                x: Int(floor(point.x / voxelSize)),
-                y: Int(floor(point.y / voxelSize)),
-                z: Int(floor(point.z / voxelSize))
-            )
-            let index: Int
-            if let existing = keys[key] {
-                index = existing
-            } else {
-                index = sums.count
-                keys[key] = index
-                sums.append(.init(x: 0, y: 0, z: 0))
-                counts.append(0)
-            }
-            originalSlot[original] = index
-            sums[index].x += point.x
-            sums[index].y += point.y
-            sums[index].z += point.z
-            counts[index] += 1
-            return index
-        }
-        struct TriKey: Hashable {
-            var a: Int
-            var b: Int
-            var c: Int
-        }
-        var seen: Set<TriKey> = []
+    private static func bucket(for angle: Double, count: Int) -> Int {
+        let turns = (angle + Double.pi) / (2 * Double.pi)
+        var index = Int(floor(turns * Double(count)))
+        if index < 0 { index = 0 }
+        if index >= count { index = count - 1 }
+        return index
+    }
+
+    private static func angleDelta(_ a: Double, _ b: Double) -> Double {
+        var delta = abs(a - b)
+        if delta > Double.pi { delta = 2 * Double.pi - delta }
+        return delta
+    }
+
+    private static func centroid(of face: Face, positions: [MeshPoint], dirX: Double, dirZ: Double) -> Double {
+        let a = positions[face.corners.0]
+        let b = positions[face.corners.1]
+        let c = positions[face.corners.2]
+        let x = (a.x + b.x + c.x) / 3
+        let z = (a.z + b.z + c.z) / 3
+        return x * dirX + z * dirZ
+    }
+
+    private static func meshFrom(faces: [Face], positions: [MeshPoint]) -> WallMesh {
+        var map: [Int: Int] = [:]
+        var compact: [MeshPoint] = []
         var indices: [Int] = []
+        func slot(_ original: Int) -> Int {
+            if let existing = map[original] { return existing }
+            let created = compact.count
+            map[original] = created
+            compact.append(positions[original])
+            return created
+        }
         for face in faces {
-            let mapped = [slot(face.corners.0), slot(face.corners.1), slot(face.corners.2)]
-            guard Set(mapped).count == 3 else { continue }
-            let ordered = mapped.sorted()
-            let key = TriKey(a: ordered[0], b: ordered[1], c: ordered[2])
-            guard seen.insert(key).inserted else { continue }
-            indices.append(contentsOf: mapped)
+            indices.append(slot(face.corners.0))
+            indices.append(slot(face.corners.1))
+            indices.append(slot(face.corners.2))
         }
-        let welded = zip(sums, counts).map { sum, count -> MeshPoint in
-            let n = Double(max(count, 1))
-            return MeshPoint(x: sum.x / n, y: sum.y / n, z: sum.z / n)
+        return WallMesh(positions: compact, indices: indices)
+    }
+
+    /// Rasterize the facing surface into a continuous panel and close small gaps.
+    private static func solidWall(from mesh: WallMesh, cell: Double) -> WallMesh {
+        guard let minX = mesh.positions.map(\.x).min(),
+              let minY = mesh.positions.map(\.y).min() else { return mesh }
+        var grid: [CellKey: Double] = [:]
+        var index = 0
+        while index + 2 < mesh.indices.count {
+            let ia = mesh.indices[index]
+            let ib = mesh.indices[index + 1]
+            let ic = mesh.indices[index + 2]
+            index += 3
+            guard mesh.positions.indices.contains(ia),
+                  mesh.positions.indices.contains(ib),
+                  mesh.positions.indices.contains(ic) else { continue }
+            let a = mesh.positions[ia]
+            let b = mesh.positions[ib]
+            let c = mesh.positions[ic]
+            let minPX = min(a.x, b.x, c.x)
+            let maxPX = max(a.x, b.x, c.x)
+            let minPY = min(a.y, b.y, c.y)
+            let maxPY = max(a.y, b.y, c.y)
+            let ix0 = Int(floor((minPX - minX) / cell))
+            let ix1 = Int(floor((maxPX - minX) / cell))
+            let iy0 = Int(floor((minPY - minY) / cell))
+            let iy1 = Int(floor((maxPY - minY) / cell))
+            guard ix1 - ix0 <= 200, iy1 - iy0 <= 200 else { continue }
+            for ix in ix0 ... ix1 {
+                for iy in iy0 ... iy1 {
+                    let px = minX + (Double(ix) + 0.5) * cell
+                    let py = minY + (Double(iy) + 0.5) * cell
+                    guard let z = barycentricZ(px, py, a, b, c) else { continue }
+                    let key = CellKey(x: ix, y: iy)
+                    grid[key] = max(grid[key] ?? -1e9, z)
+                }
+            }
         }
-        return WallMesh(positions: welded, indices: indices)
+        guard grid.isEmpty == false else { return mesh }
+        var filled = grid
+        for _ in 0 ..< 3 {
+            filled = closeGaps(filled)
+        }
+        filled = smooth(filled)
+        return ground(panel(from: filled, originX: minX, originY: minY, cell: cell))
+    }
+
+    private static func barycentricZ(_ px: Double, _ py: Double, _ a: MeshPoint, _ b: MeshPoint, _ c: MeshPoint) -> Double? {
+        let denominator = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)
+        guard abs(denominator) > 1e-12 else { return nil }
+        let w0 = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / denominator
+        let w1 = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / denominator
+        let w2 = 1 - w0 - w1
+        guard w0 >= -0.02, w1 >= -0.02, w2 >= -0.02 else { return nil }
+        return w0 * a.z + w1 * b.z + w2 * c.z
+    }
+
+    private static func closeGaps(_ grid: [CellKey: Double]) -> [CellKey: Double] {
+        var next = grid
+        var candidates: Set<CellKey> = []
+        for cell in grid.keys {
+            for step in neighborSteps where grid[CellKey(x: cell.x + step.0, y: cell.y + step.1)] == nil {
+                candidates.insert(CellKey(x: cell.x + step.0, y: cell.y + step.1))
+            }
+        }
+        for cell in candidates {
+            var sum = 0.0
+            var count = 0
+            var left = false
+            var right = false
+            var below = false
+            var above = false
+            for step in neighborSteps {
+                guard let z = grid[CellKey(x: cell.x + step.0, y: cell.y + step.1)] else { continue }
+                sum += z
+                count += 1
+                if step.0 < 0, step.1 == 0 { left = true }
+                if step.0 > 0, step.1 == 0 { right = true }
+                if step.1 < 0, step.0 == 0 { below = true }
+                if step.1 > 0, step.0 == 0 { above = true }
+            }
+            let bridged = (left && right) || (below && above)
+            if bridged, count >= 3 {
+                next[cell] = sum / Double(count)
+            }
+        }
+        return next
+    }
+
+    private static func smooth(_ grid: [CellKey: Double]) -> [CellKey: Double] {
+        var next = grid
+        for (cell, z) in grid {
+            var sum = z
+            var count = 1.0
+            for step in neighborSteps {
+                guard let other = grid[CellKey(x: cell.x + step.0, y: cell.y + step.1)] else { continue }
+                sum += other
+                count += 1
+            }
+            next[cell] = sum / count
+        }
+        return next
+    }
+
+    private static let neighborSteps: [(Int, Int)] = [
+        (-1, -1), (0, -1), (1, -1),
+        (-1, 0), (1, 0),
+        (-1, 1), (0, 1), (1, 1)
+    ]
+
+    private struct CellKey: Hashable {
+        var x: Int
+        var y: Int
+    }
+
+    private static func panel(from grid: [CellKey: Double], originX: Double, originY: Double, cell: Double) -> WallMesh {
+        var indexOf: [CellKey: Int] = [:]
+        var positions: [MeshPoint] = []
+        for (key, z) in grid {
+            indexOf[key] = positions.count
+            positions.append(MeshPoint(
+                x: originX + (Double(key.x) + 0.5) * cell,
+                y: originY + (Double(key.y) + 0.5) * cell,
+                z: z
+            ))
+        }
+        var indices: [Int] = []
+        for key in grid.keys {
+            let right = CellKey(x: key.x + 1, y: key.y)
+            let above = CellKey(x: key.x, y: key.y + 1)
+            let aboveRight = CellKey(x: key.x + 1, y: key.y + 1)
+            guard let i00 = indexOf[key],
+                  let i10 = indexOf[right],
+                  let i01 = indexOf[above],
+                  let i11 = indexOf[aboveRight] else { continue }
+            indices.append(contentsOf: [i00, i10, i11, i00, i11, i01])
+        }
+        return WallMesh(positions: positions, indices: indices)
+    }
+
+    private static func ground(_ mesh: WallMesh) -> WallMesh {
+        guard mesh.isEmpty == false,
+              let minY = mesh.positions.map(\.y).min(),
+              let minX = mesh.positions.map(\.x).min(),
+              let maxX = mesh.positions.map(\.x).max(),
+              let minZ = mesh.positions.map(\.z).min(),
+              let maxZ = mesh.positions.map(\.z).max() else { return mesh }
+        let midX = (minX + maxX) * 0.5
+        let midZ = (minZ + maxZ) * 0.5
+        let positions = mesh.positions.map { point in
+            MeshPoint(x: point.x - midX, y: point.y - minY, z: point.z - midZ)
+        }
+        return WallMesh(positions: positions, indices: mesh.indices)
     }
 
     /// Stand the wall on y = 0 and turn its face toward +Z.

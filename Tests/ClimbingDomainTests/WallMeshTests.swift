@@ -34,7 +34,10 @@ final class WallMeshTests: XCTestCase {
             MeshPoint(x: 1, y: 1, z: -1),
             MeshPoint(x: 0, y: 1, z: -1),
         ])
-        XCTAssertFalse(WallMeshMath.climbingWall(from: slab).isEmpty)
+        let cleaned = WallMeshMath.climbingWall(from: slab)
+        XCTAssertFalse(cleaned.isEmpty)
+        let zs = cleaned.positions.map(\.z)
+        XCTAssertGreaterThan((zs.max() ?? 0) - (zs.min() ?? 0), 0.45)
     }
 
     func testWallFacesTheCameraAndSitsOnTheGround() {
@@ -46,12 +49,12 @@ final class WallMeshTests: XCTestCase {
         ])
         let cleaned = WallMeshMath.climbingWall(from: wall)
         XCTAssertFalse(cleaned.isEmpty)
-        XCTAssertEqual(cleaned.positions.map(\.y).min() ?? -1, 0, accuracy: 1e-6)
-        XCTAssertEqual(cleaned.positions.map(\.y).max() ?? -1, 2, accuracy: 1e-6)
-        XCTAssertEqual(cleaned.positions.map(\.x).min() ?? 0, -1, accuracy: 1e-6)
-        XCTAssertEqual(cleaned.positions.map(\.x).max() ?? 0, 1, accuracy: 1e-6)
+        XCTAssertEqual(cleaned.positions.map(\.y).min() ?? -1, 0, accuracy: 0.02)
+        XCTAssertEqual(cleaned.positions.map(\.y).max() ?? -1, 2, accuracy: 0.2)
+        let xs = cleaned.positions.map(\.x)
+        XCTAssertEqual((xs.max() ?? 0) - (xs.min() ?? 0), 2, accuracy: 0.25)
         for point in cleaned.positions {
-            XCTAssertEqual(point.z, 0, accuracy: 1e-6)
+            XCTAssertEqual(point.z, 0, accuracy: 0.05)
         }
         let normal = faceNormal(cleaned)
         XCTAssertGreaterThan(normal.z, 0.9)
@@ -60,17 +63,16 @@ final class WallMeshTests: XCTestCase {
     func testBoxDropsFloorAndCeiling() {
         let box = unitBox()
         let cleaned = WallMeshMath.climbingWall(from: box)
-        XCTAssertEqual(cleaned.indices.count, 24)
-        var index = 0
-        while index + 2 < cleaned.indices.count {
-            let normal = unitNormal(
-                cleaned.positions[cleaned.indices[index]],
-                cleaned.positions[cleaned.indices[index + 1]],
-                cleaned.positions[cleaned.indices[index + 2]]
-            )
-            XCTAssertLessThanOrEqual(abs(normal.y), 0.2)
-            index += 3
-        }
+        let ys = cleaned.positions.map(\.y)
+        let xs = cleaned.positions.map(\.x)
+        let zs = cleaned.positions.map(\.z)
+        let ySpan = (ys.max() ?? 0) - (ys.min() ?? 0)
+        let xSpan = (xs.max() ?? 0) - (xs.min() ?? 0)
+        let zSpan = (zs.max() ?? 0) - (zs.min() ?? 0)
+        XCTAssertFalse(cleaned.isEmpty)
+        XCTAssertGreaterThan(ySpan, 0.6)
+        XCTAssertLessThan(max(xSpan, ySpan), 1.35)
+        XCTAssertLessThan(zSpan, 0.25)
     }
 
     func testSmallScrapIsDropped() {
@@ -88,8 +90,12 @@ final class WallMeshTests: XCTestCase {
             indices: [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]
         )
         let cleaned = WallMeshMath.climbingWall(from: mesh)
-        XCTAssertEqual(cleaned.positions.count, 4)
-        XCTAssertEqual(cleaned.positions.map(\.y).max() ?? 0, 2, accuracy: 1e-6)
+        let ys = cleaned.positions.map(\.y)
+        let xs = cleaned.positions.map(\.x)
+        let zs = cleaned.positions.map(\.z)
+        XCTAssertGreaterThan((ys.max() ?? 0) - (ys.min() ?? 0), 1.5)
+        XCTAssertLessThan((xs.max() ?? 0) - (xs.min() ?? 0), 2.6)
+        XCTAssertLessThan((zs.max() ?? 0) - (zs.min() ?? 0), 0.4)
     }
 
     func testNearbyNoiseWeldsIntoOneFace() {
@@ -105,7 +111,38 @@ final class WallMeshTests: XCTestCase {
             indices: [0, 1, 2, 3, 4, 5]
         )
         let cleaned = WallMeshMath.climbingWall(from: mesh, voxelSize: 0.04)
-        XCTAssertEqual(cleaned.indices.count, 3)
+        let zs = cleaned.positions.map(\.z)
+        XCTAssertFalse(cleaned.isEmpty)
+        XCTAssertLessThan((zs.max() ?? 1) - (zs.min() ?? 0), 0.1)
+    }
+
+    func testFarPanelAndSideWallAreLeftOut() {
+        let mesh = WallMesh(
+            positions: [
+                MeshPoint(x: 0, y: 0, z: 0),
+                MeshPoint(x: 0, y: 2, z: 0),
+                MeshPoint(x: 0, y: 2, z: 2),
+                MeshPoint(x: 0, y: 0, z: 2),
+                MeshPoint(x: 3, y: 0, z: 0),
+                MeshPoint(x: 3, y: 0.5, z: 0),
+                MeshPoint(x: 3, y: 0.5, z: 0.5),
+                MeshPoint(x: 3, y: 0, z: 0.5),
+                MeshPoint(x: 0, y: 0, z: 0),
+                MeshPoint(x: 1, y: 0, z: 0),
+                MeshPoint(x: 1, y: 1, z: 0),
+                MeshPoint(x: 0, y: 1, z: 0),
+            ],
+            indices: [
+                0, 1, 2, 0, 2, 3,
+                4, 5, 6, 4, 6, 7,
+                8, 9, 10, 8, 10, 11,
+            ]
+        )
+        let cleaned = WallMeshMath.climbingWall(from: mesh)
+        let ys = cleaned.positions.map(\.y)
+        let zs = cleaned.positions.map(\.z)
+        XCTAssertGreaterThan((ys.max() ?? 0) - (ys.min() ?? 0), 1.5)
+        XCTAssertLessThan((zs.max() ?? 1) - (zs.min() ?? 0), 0.8)
     }
 
     private func quad(_ points: [MeshPoint]) -> WallMesh {

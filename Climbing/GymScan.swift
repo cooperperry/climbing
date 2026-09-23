@@ -112,7 +112,8 @@ enum GymScanExporter {
         )
         let geometry = SCNGeometry(sources: sources, elements: [element])
         let material = SCNMaterial()
-        material.diffuse.contents = UIColor(white: 0.78, alpha: 1)
+        material.diffuse.contents = UIColor(red: 0.64, green: 0.62, blue: 0.58, alpha: 1)
+        material.lightingModel = .lambert
         material.isDoubleSided = true
         geometry.materials = [material]
 
@@ -125,6 +126,62 @@ enum GymScanExporter {
         let data = try Data(contentsOf: url)
         guard data.isEmpty == false else { throw GymScanExportError.writeFailed }
         return data
+    }
+
+    /// Rebuild an already-saved scan into the solid wall. Used once for older files.
+    static func refine(_ data: Data) -> Data? {
+        guard let mesh = mesh(fromUSDZ: data), mesh.isEmpty == false else { return nil }
+        let cleaned = WallMeshMath.climbingWall(from: mesh)
+        guard cleaned.isEmpty == false else { return nil }
+        let positions = cleaned.positions.map { SIMD3(Float($0.x), Float($0.y), Float($0.z)) }
+        let indices = cleaned.indices.map { UInt32($0) }
+        return try? writeUSDZ(positions: positions, indices: indices)
+    }
+
+    private static func mesh(fromUSDZ data: Data) -> WallMesh? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("gym-refine-\(UUID().uuidString).usdz")
+        defer { try? FileManager.default.removeItem(at: url) }
+        guard (try? data.write(to: url)) != nil,
+              let scene = try? SCNScene(url: url, options: nil) else { return nil }
+        var positions: [MeshPoint] = []
+        var indices: [Int] = []
+        var nodes = [scene.rootNode]
+        scene.rootNode.enumerateChildNodes { node, _ in nodes.append(node) }
+        for node in nodes {
+            guard let geometry = node.geometry,
+                  let source = geometry.sources(for: .vertex).first else { continue }
+            let base = positions.count
+            let stride = source.dataStride
+            let offset = source.dataOffset
+            let bytes = source.data
+            for index in 0 ..< source.vectorCount {
+                let start = offset + index * stride
+                guard start + MemoryLayout<Float>.size * 3 <= bytes.count else { continue }
+                let x = bytes.withUnsafeBytes { $0.load(fromByteOffset: start, as: Float.self) }
+                let y = bytes.withUnsafeBytes { $0.load(fromByteOffset: start + 4, as: Float.self) }
+                let z = bytes.withUnsafeBytes { $0.load(fromByteOffset: start + 8, as: Float.self) }
+                let world = node.convertPosition(SCNVector3(x, y, z), to: nil)
+                positions.append(MeshPoint(x: Double(world.x), y: Double(world.y), z: Double(world.z)))
+            }
+            for element in geometry.elements where element.primitiveType == .triangles {
+                let bytesPerIndex = element.bytesPerIndex
+                let raw = element.data
+                let corners = element.primitiveCount * 3
+                for corner in 0 ..< corners {
+                    let start = corner * bytesPerIndex
+                    guard start + bytesPerIndex <= raw.count else { continue }
+                    let value: Int
+                    if bytesPerIndex == MemoryLayout<UInt16>.size {
+                        value = Int(raw.withUnsafeBytes { $0.load(fromByteOffset: start, as: UInt16.self) })
+                    } else {
+                        value = Int(raw.withUnsafeBytes { $0.load(fromByteOffset: start, as: UInt32.self) })
+                    }
+                    indices.append(base + value)
+                }
+            }
+        }
+        guard positions.count >= 3, indices.count >= 3 else { return nil }
+        return WallMesh(positions: positions, indices: indices)
     }
 
     private static func normals(positions: [SIMD3<Float>], indices: [UInt32]) -> [SIMD3<Float>] {
@@ -324,7 +381,7 @@ struct GymWallEditor: View {
     @Binding var grade: String?
     @Binding var color: HoldColor
     @Binding var discipline: ClimbDiscipline
-    var onPlace: (MeshPoint, MeshPoint) -> Void
+    var onStroke: ([MeshPoint], MeshPoint) -> Void
     var onDelete: (UUID) -> Void
 
     @State private var placing = false
@@ -341,8 +398,9 @@ struct GymWallEditor: View {
                 routes: routes,
                 selectedID: selectedID,
                 placing: placing,
+                color: color,
                 onSelect: { selectedID = $0 },
-                onPlace: onPlace
+                onStroke: onStroke
             )
             .ignoresSafeArea()
             controlBar
@@ -357,7 +415,7 @@ struct GymWallEditor: View {
 
     private var controlBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(placing ? "Tap the wall to drop \(grade ?? "a route")." : "Saved on this gym. Drag to look around.")
+            Text(placing ? "Draw the route up the wall with your finger." : "Saved on this gym. Drag to look around.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if placing {
@@ -419,7 +477,7 @@ struct GymWallEditor: View {
                 }
             }
             HStack {
-                Button(placing ? "Done placing" : "Add route") {
+                Button(placing ? "Done drawing" : "Draw route") {
                     placing.toggle()
                 }
                 .buttonStyle(.borderedProminent)
@@ -444,8 +502,9 @@ private struct GymWallScene: UIViewRepresentable {
     var routes: [WallRoutePin]
     var selectedID: UUID?
     var placing: Bool
+    var color: HoldColor
     var onSelect: (UUID?) -> Void
-    var onPlace: (MeshPoint, MeshPoint) -> Void
+    var onStroke: ([MeshPoint], MeshPoint) -> Void
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -455,14 +514,25 @@ private struct GymWallScene: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped))
         tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.drew(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.isEnabled = false
+        view.addGestureRecognizer(pan)
+        context.coordinator.draw = pan
         return view
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) {
         context.coordinator.placing = placing
+        context.coordinator.color = color
         context.coordinator.onSelect = onSelect
-        context.coordinator.onPlace = onPlace
+        context.coordinator.onStroke = onStroke
+        context.coordinator.draw?.isEnabled = placing
         uiView.allowsCameraControl = placing == false
+        if placing == false {
+            context.coordinator.draft.removeAll()
+            uiView.scene?.rootNode.childNode(withName: "draft-stroke", recursively: false)?.removeFromParentNode()
+        }
         if context.coordinator.loadedCount != data.count {
             let loaded = scene(from: data)
             uiView.scene = loaded
@@ -479,42 +549,71 @@ private struct GymWallScene: UIViewRepresentable {
     final class Coordinator: NSObject {
         var placing = false
         var loadedCount: Int?
+        var color = HoldColor.blue
+        var draft: [MeshPoint] = []
+        var draw: UIPanGestureRecognizer?
         var onSelect: ((UUID?) -> Void)?
-        var onPlace: ((MeshPoint, MeshPoint) -> Void)?
+        var onStroke: (([MeshPoint], MeshPoint) -> Void)?
 
         @objc func tapped(_ gesture: UITapGestureRecognizer) {
             guard let view = gesture.view as? SCNView else { return }
-            let point = gesture.location(in: view)
-            let hits = view.hitTest(point, options: [
+            let hits = view.hitTest(gesture.location(in: view), options: [
+                SCNHitTestOption.categoryBitMask: 2,
                 SCNHitTestOption.searchMode: SCNHitTestSearchMode.closest.rawValue
             ])
-            guard let hit = hits.first else {
-                onSelect?(nil)
-                return
+            onSelect?(hits.first.flatMap { routeID(from: $0.node) })
+        }
+
+        @objc func drew(_ gesture: UIPanGestureRecognizer) {
+            guard placing, let view = gesture.view as? SCNView else { return }
+            switch gesture.state {
+            case .began:
+                draft.removeAll()
+                if let hit = wallHit(in: view, at: gesture.location(in: view)) {
+                    draft.append(hit)
+                }
+                showDraft(in: view)
+            case .changed:
+                guard let hit = wallHit(in: view, at: gesture.location(in: view)) else { return }
+                if let last = draft.last {
+                    let step = hypot(hit.x - last.x, hypot(hit.y - last.y, hit.z - last.z))
+                    guard step >= 0.03 else { return }
+                }
+                draft.append(hit)
+                showDraft(in: view)
+            case .ended, .cancelled, .failed:
+                let stroke = draft
+                draft.removeAll()
+                view.scene?.rootNode.childNode(withName: "draft-stroke", recursively: false)?.removeFromParentNode()
+                guard gesture.state == .ended, stroke.count >= 2 else { return }
+                let length = zip(stroke, stroke.dropFirst()).reduce(0.0) { total, pair in
+                    total + hypot(pair.1.x - pair.0.x, hypot(pair.1.y - pair.0.y, pair.1.z - pair.0.z))
+                }
+                guard length >= 0.12 else { return }
+                onStroke?(stroke, MeshPoint(x: 0, y: 0, z: 1))
+            default:
+                break
             }
-            if let id = routeID(from: hit.node) {
-                onSelect?(id)
-                return
-            }
-            guard placing else { return }
+        }
+
+        private func wallHit(in view: SCNView, at point: CGPoint) -> MeshPoint? {
+            let hits = view.hitTest(point, options: [
+                SCNHitTestOption.categoryBitMask: 1,
+                SCNHitTestOption.searchMode: SCNHitTestSearchMode.closest.rawValue
+            ])
+            guard let hit = hits.first else { return nil }
             let location = hit.worldCoordinates
-            var normal = hit.node.convertVector(hit.localNormal, to: nil)
-            let length = hypot(normal.x, hypot(normal.y, normal.z))
-            if length > 1e-5 {
-                normal = SCNVector3(normal.x / length, normal.y / length, normal.z / length)
-            } else {
-                normal = SCNVector3(0, 0, 1)
-            }
-            let camera = view.pointOfView?.worldPosition ?? SCNVector3(0, 0, 1)
-            let towardCamera = SCNVector3(camera.x - location.x, camera.y - location.y, camera.z - location.z)
-            let facing = normal.x * towardCamera.x + normal.y * towardCamera.y + normal.z * towardCamera.z
-            if facing < 0 {
-                normal = SCNVector3(-normal.x, -normal.y, -normal.z)
-            }
-            onPlace?(
-                MeshPoint(x: Double(location.x), y: Double(location.y), z: Double(location.z)),
-                MeshPoint(x: Double(normal.x), y: Double(normal.y), z: Double(normal.z))
-            )
+            return MeshPoint(x: Double(location.x), y: Double(location.y), z: Double(location.z))
+        }
+
+        private func showDraft(in view: SCNView) {
+            guard let scene = view.scene else { return }
+            scene.rootNode.childNode(withName: "draft-stroke", recursively: false)?.removeFromParentNode()
+            guard draft.count >= 2 else { return }
+            let node = strokeNode(points: draft, color: color, selected: true)
+            node.name = "draft-stroke"
+            node.categoryBitMask = 2
+            scene.rootNode.addChildNode(node)
         }
 
         private func routeID(from node: SCNNode?) -> UUID? {
@@ -541,11 +640,20 @@ private struct GymWallScene: UIViewRepresentable {
     }
 
     private func marker(for route: WallRoutePin, selected: Bool) -> SCNNode {
+        let hold = HoldColor(rawValue: route.colorName) ?? .blue
+        if route.path.count >= 2 {
+            let node = strokeNode(points: route.path, color: hold, selected: selected)
+            node.name = "route:\(route.id.uuidString)"
+            let top = route.path.max(by: { $0.y < $1.y }) ?? route.path[0]
+            node.addChildNode(gradeLabel(route.grade, at: top))
+            return node
+        }
         let raw = SIMD3(Float(route.nx), Float(route.ny), Float(route.nz))
         let normal = simd_length(raw) > 0.001 ? simd_normalize(raw) : SIMD3<Float>(0, 0, 1)
         let lift: Float = 0.055
         let node = SCNNode()
         node.name = "route:\(route.id.uuidString)"
+        node.categoryBitMask = 2
         node.position = SCNVector3(
             Float(route.x) + normal.x * lift,
             Float(route.y) + normal.y * lift,
@@ -553,7 +661,6 @@ private struct GymWallScene: UIViewRepresentable {
         )
         let sphere = SCNSphere(radius: selected ? 0.075 : 0.05)
         let material = SCNMaterial()
-        let hold = HoldColor(rawValue: route.colorName) ?? .blue
         material.diffuse.contents = UIColor(
             red: CGFloat(hold.red),
             green: CGFloat(hold.green),
@@ -590,8 +697,10 @@ private struct GymWallScene: UIViewRepresentable {
             let loaded = try SCNScene(url: url, options: nil)
             try? FileManager.default.removeItem(at: url)
             loaded.rootNode.enumerateChildNodes { node, _ in
+                node.categoryBitMask = 1
                 node.geometry?.materials.forEach { $0.isDoubleSided = true }
             }
+            loaded.rootNode.categoryBitMask = 1
             return loaded
         } catch {
             try? FileManager.default.removeItem(at: url)
@@ -641,4 +750,42 @@ private struct GymWallScene: UIViewRepresentable {
         scene.rootNode.addChildNode(cameraNode)
         view.pointOfView = cameraNode
     }
+}
+
+private func strokeNode(points: [MeshPoint], color: HoldColor, selected: Bool) -> SCNNode {
+    let node = SCNNode()
+    node.categoryBitMask = 2
+    let material = SCNMaterial()
+    material.diffuse.contents = UIColor(red: CGFloat(color.red), green: CGFloat(color.green), blue: CGFloat(color.blue), alpha: 1)
+    material.lightingModel = .constant
+    let radius: CGFloat = selected ? 0.034 : 0.026
+    for point in points {
+        let sphere = SCNSphere(radius: radius)
+        sphere.materials = [material]
+        let dot = SCNNode(geometry: sphere)
+        dot.categoryBitMask = 2
+        dot.position = SCNVector3(Float(point.x), Float(point.y), Float(point.z) + 0.025)
+        node.addChildNode(dot)
+    }
+    return node
+}
+
+private func gradeLabel(_ grade: String, at point: MeshPoint) -> SCNNode {
+    let text = SCNText(string: grade, extrusionDepth: 0.4)
+    text.font = UIFont.systemFont(ofSize: 12, weight: .bold)
+    text.flatness = 0.3
+    let material = SCNMaterial()
+    material.diffuse.contents = UIColor.white
+    material.lightingModel = .constant
+    text.materials = [material]
+    let node = SCNNode(geometry: text)
+    let (minBound, maxBound) = node.boundingBox
+    let height = max(maxBound.y - minBound.y, 0.001)
+    let scale = 0.07 / height
+    node.scale = SCNVector3(scale, scale, scale)
+    node.pivot = SCNMatrix4MakeTranslation((minBound.x + maxBound.x) / 2, minBound.y, 0)
+    node.position = SCNVector3(Float(point.x), Float(point.y) + 0.08, Float(point.z) + 0.03)
+    node.constraints = [SCNBillboardConstraint()]
+    node.categoryBitMask = 2
+    return node
 }
