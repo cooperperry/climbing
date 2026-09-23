@@ -20,8 +20,22 @@ final class ClimbGym {
     var currentFloorName: String?
     /// Display names of floors whose walls are locked. Routes on a locked floor can still change.
     var lockedFloors: String = ""
-    /// LiDAR mesh of the gym, exported as USDZ. Nil until someone scans the room.
+    /// Older builds stored a mesh blob here. New scans live in a file named by `scanFileName`.
     var scanModelData: Data?
+    /// File name of the cleaned climbing-wall model in Application Support.
+    var scanFileName: String?
+    /// Routes placed on the cleaned wall, encoded as `[WallRoutePin]`.
+    var wallRoutesData: Data?
+
+    var wallRoutes: [WallRoutePin] {
+        get {
+            guard let wallRoutesData, wallRoutesData.isEmpty == false else { return [] }
+            return (try? JSONDecoder().decode([WallRoutePin].self, from: wallRoutesData)) ?? []
+        }
+        set {
+            wallRoutesData = newValue.isEmpty ? nil : (try? JSONEncoder().encode(newValue))
+        }
+    }
 
     @Relationship(deleteRule: .cascade, inverse: \GymArea.gym)
     var areas: [GymArea] = []

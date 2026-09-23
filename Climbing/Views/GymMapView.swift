@@ -84,6 +84,7 @@ struct GymMapView: View {
     @State private var showScan = false
     @State private var showScanPreview = false
     @State private var openPreviewAfterScan = false
+    @State private var scanStoreMessage: String?
     @State private var traceMessage: String?
     @State private var didCenterMap = false
     @State private var underlayImage: UIImage?
@@ -228,6 +229,16 @@ struct GymMapView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
+                if hasClimbingWall {
+                    Button {
+                        showScanPreview = true
+                    } label: {
+                        Image(systemName: "cube")
+                    }
+                    .accessibilityLabel("Climbing wall")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showScan = true
                 } label: {
@@ -250,21 +261,44 @@ struct GymMapView: View {
                 showScanPreview = true
             }
         }) {
-            GymScanCaptureView { data in
-                gym.scanModelData = data
-                persistMap()
-                openPreviewAfterScan = true
+            GymScanCaptureView(replacesExisting: hasClimbingWall) { data in
+                storeScan(data)
             }
         }
         .sheet(isPresented: $showScanPreview) {
             NavigationStack {
-                if let data = gym.scanModelData {
-                    GymScanPreview(data: data)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { showScanPreview = false }
-                            }
+                if let data = GymScanStore.read(gymID: gym.id) {
+                    GymWallEditor(
+                        data: data,
+                        routes: gym.wallRoutes,
+                        grades: scale?.grades ?? GradeScaleTemplate.standardVScale().grades,
+                        grade: $logGrade,
+                        color: $draftColor,
+                        discipline: $logDiscipline,
+                        onPlace: { point, normal in
+                            placeWallRoute(at: point, normal: normal)
+                        },
+                        onDelete: { id in
+                            gym.wallRoutes = gym.wallRoutes.filter { $0.id != id }
+                            persistMap()
                         }
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showScanPreview = false }
+                        }
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "Wall file missing",
+                        systemImage: "cube",
+                        description: Text("Scan the wall again to rebuild it.")
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showScanPreview = false }
+                        }
+                    }
                 }
             }
         }
@@ -273,6 +307,14 @@ struct GymMapView: View {
         }
         .sheet(isPresented: $showWallList) {
             wallListSheet
+        }
+        .alert("Couldn't store the wall", isPresented: Binding(
+            get: { scanStoreMessage != nil },
+            set: { if $0 == false { scanStoreMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(scanStoreMessage ?? "")
         }
         .onChange(of: drawTool) { _, newTool in
             rubberBand = nil
@@ -288,6 +330,10 @@ struct GymMapView: View {
                 gym.currentFloorName = "Main"
             }
             refreshUnderlayImage()
+            if gym.scanFileName == nil, GymScanStore.hasModel(gymID: gym.id) {
+                gym.scanFileName = gym.id.uuidString
+                persistMap()
+            }
         }
         .onChange(of: logDiscipline) { _, _ in
             logGrade = scale?.grades.first
@@ -414,8 +460,8 @@ struct GymMapView: View {
                 }
                 Section {
                     Button("Fit gym") { fitGymToScreen(in: canvasSize) }
-                    if gym.scanModelData != nil {
-                        Button("View 3D model") {
+                    if hasClimbingWall {
+                        Button("Climbing wall") {
                             showMapSettings = false
                             showScanPreview = true
                         }
@@ -1894,6 +1940,48 @@ struct GymMapView: View {
         zoneDraft = area.zoneName
         gym.currentWallName = area.name.isEmpty ? nil : area.name
         for item in gyms { item.isCurrent = (item.id == gym.id) }
+        persistMap()
+    }
+
+    private var hasClimbingWall: Bool {
+        gym.scanFileName != nil
+    }
+
+    private func storeScan(_ data: Data) {
+        do {
+            try GymScanStore.write(data, gymID: gym.id)
+        } catch {
+            scanStoreMessage = "The wall couldn't be stored on this phone. Try a shorter scan."
+            return
+        }
+        gym.scanFileName = gym.id.uuidString
+        gym.scanModelData = nil
+        gym.wallRoutes = []
+        do {
+            try context.save()
+            PhoneWatchBridge.shared.publishSnapshot()
+        } catch {
+            scanStoreMessage = "The wall was built, but saving it onto the gym failed. It is still here for this visit."
+        }
+        openPreviewAfterScan = true
+    }
+
+    private func placeWallRoute(at point: MeshPoint, normal: MeshPoint) {
+        let choices = scale?.grades ?? GradeScaleTemplate.standardVScale().grades
+        let chosen = logGrade ?? choices.first ?? "V0"
+        logGrade = chosen
+        var routes = gym.wallRoutes
+        routes.append(WallRoutePin(
+            grade: chosen,
+            colorName: draftColor.rawValue,
+            x: point.x,
+            y: point.y,
+            z: point.z,
+            nx: normal.x,
+            ny: normal.y,
+            nz: normal.z
+        ))
+        gym.wallRoutes = routes
         persistMap()
     }
 
