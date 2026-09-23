@@ -52,10 +52,9 @@ final class WallMeshTests: XCTestCase {
         XCTAssertEqual(cleaned.positions.map(\.y).min() ?? -1, 0, accuracy: 0.02)
         XCTAssertEqual(cleaned.positions.map(\.y).max() ?? -1, 2, accuracy: 0.2)
         let xs = cleaned.positions.map(\.x)
+        let zs = cleaned.positions.map(\.z)
         XCTAssertEqual((xs.max() ?? 0) - (xs.min() ?? 0), 2, accuracy: 0.25)
-        for point in cleaned.positions {
-            XCTAssertEqual(point.z, 0, accuracy: 0.05)
-        }
+        XCTAssertLessThan((zs.max() ?? 1) - (zs.min() ?? 0), 0.2)
         let normal = faceNormal(cleaned)
         XCTAssertGreaterThan(normal.z, 0.9)
     }
@@ -113,7 +112,26 @@ final class WallMeshTests: XCTestCase {
         let cleaned = WallMeshMath.climbingWall(from: mesh, voxelSize: 0.04)
         let zs = cleaned.positions.map(\.z)
         XCTAssertFalse(cleaned.isEmpty)
-        XCTAssertLessThan((zs.max() ?? 1) - (zs.min() ?? 0), 0.1)
+        XCTAssertLessThan((zs.max() ?? 1) - (zs.min() ?? 0), 0.2)
+    }
+
+    func testGapBetweenWallSectionsIsFilled() {
+        let mesh = WallMesh(
+            positions: [
+                MeshPoint(x: 0, y: 0, z: 0),
+                MeshPoint(x: 0, y: 1, z: 0),
+                MeshPoint(x: 0, y: 1, z: 1),
+                MeshPoint(x: 0, y: 0, z: 1),
+                MeshPoint(x: 0, y: 0, z: 1.4),
+                MeshPoint(x: 0, y: 1, z: 1.4),
+                MeshPoint(x: 0, y: 1, z: 2.4),
+                MeshPoint(x: 0, y: 0, z: 2.4),
+            ],
+            indices: [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]
+        )
+        let cleaned = WallMeshMath.climbingWall(from: mesh)
+        let filled = cleaned.positions.contains { abs($0.x) < 0.08 && $0.y > 0.3 && $0.y < 0.7 }
+        XCTAssertTrue(filled)
     }
 
     func testFarPanelAndSideWallAreLeftOut() {

@@ -112,7 +112,8 @@ enum GymScanExporter {
         )
         let geometry = SCNGeometry(sources: sources, elements: [element])
         let material = SCNMaterial()
-        material.diffuse.contents = UIColor(red: 0.64, green: 0.62, blue: 0.58, alpha: 1)
+        material.diffuse.contents = UIColor(red: 0.86, green: 0.87, blue: 0.88, alpha: 1)
+        material.specular.contents = UIColor.black
         material.lightingModel = .lambert
         material.isDoubleSided = true
         geometry.materials = [material]

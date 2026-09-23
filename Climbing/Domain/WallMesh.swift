@@ -264,12 +264,21 @@ public enum WallMeshMath {
             }
         }
         guard grid.isEmpty == false else { return mesh }
-        var filled = grid
-        for _ in 0 ..< 3 {
+        var filled = largestPatch(grid)
+        for _ in 0 ..< 2 {
+            filled = fillEnclosed(filled, reach: 10)
+        }
+        for _ in 0 ..< 4 {
             filled = closeGaps(filled)
         }
-        filled = smooth(filled)
-        return ground(panel(from: filled, originX: minX, originY: minY, cell: cell))
+        for _ in 0 ..< 3 {
+            filled = smooth(filled)
+        }
+        for _ in 0 ..< 2 {
+            filled = flattenPanels(filled)
+        }
+        let shell = ground(panel(from: filled, originX: minX, originY: minY, cell: cell))
+        return thicken(shell, depth: 0.1)
     }
 
     private static func barycentricZ(_ px: Double, _ py: Double, _ a: MeshPoint, _ b: MeshPoint, _ c: MeshPoint) -> Double? {
@@ -280,6 +289,204 @@ public enum WallMeshMath {
         let w2 = 1 - w0 - w1
         guard w0 >= -0.02, w1 >= -0.02, w2 >= -0.02 else { return nil }
         return w0 * a.z + w1 * b.z + w2 * c.z
+    }
+
+    /// Drop floating scraps so a gap fill cannot bridge over to furniture.
+    private static func largestPatch(_ grid: [CellKey: Double]) -> [CellKey: Double] {
+        let keys = Array(grid.keys)
+        guard keys.isEmpty == false else { return grid }
+        var indexOf: [CellKey: Int] = [:]
+        for (index, key) in keys.enumerated() { indexOf[key] = index }
+        var parent = Array(0 ..< keys.count)
+        func find(_ start: Int) -> Int {
+            var index = start
+            while parent[index] != index {
+                parent[index] = parent[parent[index]]
+                index = parent[index]
+            }
+            return index
+        }
+        func unite(_ a: Int, _ b: Int) {
+            let left = find(a)
+            let right = find(b)
+            if left != right { parent[right] = left }
+        }
+        let orthogonal = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        for (index, key) in keys.enumerated() {
+            for step in orthogonal {
+                if let other = indexOf[CellKey(x: key.x + step.0, y: key.y + step.1)] {
+                    unite(index, other)
+                }
+            }
+        }
+        var counts: [Int: Int] = [:]
+        for index in keys.indices {
+            counts[find(index), default: 0] += 1
+        }
+        let largest = counts.values.max() ?? 0
+        let minimum = max(4, Int(Double(largest) * 0.15))
+        var kept: [CellKey: Double] = [:]
+        for (index, key) in keys.enumerated() where (counts[find(index)] ?? 0) >= minimum {
+            if let z = grid[key] { kept[key] = z }
+        }
+        return kept.isEmpty ? grid : kept
+    }
+
+    /// Fill a missing patch when the wall continues on both sides, up to about half a meter.
+    private static func fillEnclosed(_ grid: [CellKey: Double], reach: Int) -> [CellKey: Double] {
+        guard let minX = grid.keys.map(\.x).min(),
+              let maxX = grid.keys.map(\.x).max(),
+              let minY = grid.keys.map(\.y).min(),
+              let maxY = grid.keys.map(\.y).max() else { return grid }
+        var next = grid
+        for x in minX ... maxX {
+            for y in minY ... maxY {
+                let key = CellKey(x: x, y: y)
+                if grid[key] != nil { continue }
+                if let horizontal = bridge(grid, x: x, y: y, stepX: 1, stepY: 0, reach: reach),
+                   abs(horizontal.0 - horizontal.1) < 0.55 {
+                    next[key] = (horizontal.0 + horizontal.1) / 2
+                } else if let vertical = bridge(grid, x: x, y: y, stepX: 0, stepY: 1, reach: reach),
+                          abs(vertical.0 - vertical.1) < 0.55 {
+                    next[key] = (vertical.0 + vertical.1) / 2
+                }
+            }
+        }
+        return next
+    }
+
+    /// Z on both sides of an empty cell, when each side is within `reach`.
+    private static func bridge(
+        _ grid: [CellKey: Double],
+        x: Int,
+        y: Int,
+        stepX: Int,
+        stepY: Int,
+        reach: Int
+    ) -> (Double, Double)? {
+        var negative: Double?
+        var positive: Double?
+        for step in 1 ... reach {
+            if negative == nil, let z = grid[CellKey(x: x - stepX * step, y: y - stepY * step)] {
+                negative = z
+            }
+            if positive == nil, let z = grid[CellKey(x: x + stepX * step, y: y + stepY * step)] {
+                positive = z
+            }
+        }
+        guard let negative, let positive else { return nil }
+        return (negative, positive)
+    }
+
+    /// Snap nearly flat neighborhoods onto a plane so the surface reads as panels, not scan noise.
+    private static func flattenPanels(_ grid: [CellKey: Double]) -> [CellKey: Double] {
+        var next = grid
+        for cell in grid.keys {
+            var samples: [(Double, Double, Double)] = []
+            for dy in -2 ... 2 {
+                for dx in -2 ... 2 {
+                    guard let z = grid[CellKey(x: cell.x + dx, y: cell.y + dy)] else { continue }
+                    samples.append((Double(dx), Double(dy), z))
+                }
+            }
+            guard samples.count >= 8, let plane = fitPlane(samples), plane.residual < 0.045 else { continue }
+            next[cell] = plane.c
+        }
+        return next
+    }
+
+    private static func fitPlane(_ samples: [(Double, Double, Double)]) -> (a: Double, b: Double, c: Double, residual: Double)? {
+        var count = 0.0
+        var sx = 0.0, sy = 0.0, sz = 0.0
+        var sxx = 0.0, syy = 0.0, sxy = 0.0, sxz = 0.0, syz = 0.0
+        for (x, y, z) in samples {
+            count += 1
+            sx += x
+            sy += y
+            sz += z
+            sxx += x * x
+            syy += y * y
+            sxy += x * y
+            sxz += x * z
+            syz += y * z
+        }
+        let matrix = [
+            [count, sx, sy],
+            [sx, sxx, sxy],
+            [sy, sxy, syy]
+        ]
+        guard let solved = solve3(matrix, [sz, sxz, syz]) else { return nil }
+        let c = solved[0]
+        let a = solved[1]
+        let b = solved[2]
+        var residual = 0.0
+        for (x, y, z) in samples {
+            residual = max(residual, abs(a * x + b * y + c - z))
+        }
+        return (a, b, c, residual)
+    }
+
+    private static func solve3(_ matrix: [[Double]], _ rhs: [Double]) -> [Double]? {
+        var rows = matrix
+        var values = rhs
+        for column in 0 ..< 3 {
+            var pivot = column
+            for row in (column + 1) ..< 3 where abs(rows[row][column]) > abs(rows[pivot][column]) {
+                pivot = row
+            }
+            guard abs(rows[pivot][column]) > 1e-8 else { return nil }
+            if pivot != column {
+                rows.swapAt(pivot, column)
+                values.swapAt(pivot, column)
+            }
+            let divisor = rows[column][column]
+            for index in column ..< 3 { rows[column][index] /= divisor }
+            values[column] /= divisor
+            for row in 0 ..< 3 where row != column {
+                let factor = rows[row][column]
+                for index in column ..< 3 {
+                    rows[row][index] -= factor * rows[column][index]
+                }
+                values[row] -= factor * values[column]
+            }
+        }
+        return values
+    }
+
+    /// Give the sheet the thickness of a climbing panel so the edge is a wall, not paper.
+    private static func thicken(_ mesh: WallMesh, depth: Double) -> WallMesh {
+        guard mesh.isEmpty == false else { return mesh }
+        let count = mesh.positions.count
+        var positions = mesh.positions
+        positions.append(contentsOf: mesh.positions.map { MeshPoint(x: $0.x, y: $0.y, z: $0.z - depth) })
+        var indices = mesh.indices
+        struct EdgeKey: Hashable {
+            var a: Int
+            var b: Int
+            init(_ i: Int, _ j: Int) {
+                if i < j { a = i; b = j } else { a = j; b = i }
+            }
+        }
+        var uses: [EdgeKey: Int] = [:]
+        var directed: [EdgeKey: (Int, Int)] = [:]
+        var index = 0
+        while index + 2 < mesh.indices.count {
+            let tri = [mesh.indices[index], mesh.indices[index + 1], mesh.indices[index + 2]]
+            indices.append(contentsOf: [tri[0] + count, tri[2] + count, tri[1] + count])
+            for corner in 0 ..< 3 {
+                let from = tri[corner]
+                let to = tri[(corner + 1) % 3]
+                let key = EdgeKey(from, to)
+                uses[key, default: 0] += 1
+                directed[key] = (from, to)
+            }
+            index += 3
+        }
+        for (key, countUses) in uses where countUses == 1 {
+            guard let (from, to) = directed[key] else { continue }
+            indices.append(contentsOf: [from, to, to + count, from, to + count, from + count])
+        }
+        return WallMesh(positions: positions, indices: indices)
     }
 
     private static func closeGaps(_ grid: [CellKey: Double]) -> [CellKey: Double] {
