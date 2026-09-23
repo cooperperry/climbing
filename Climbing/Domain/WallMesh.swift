@@ -350,7 +350,7 @@ public enum WallMeshMath {
         for cell in grid.cells {
             samples[CellKey(x: cell.x, y: cell.y)] = cell.z
         }
-        let shell = panel(from: samples, originX: -grid.cellSize / 2, originY: -grid.cellSize / 2, cell: grid.cellSize)
+        let shell = smoothOutline(panel(from: samples, originX: -grid.cellSize / 2, originY: -grid.cellSize / 2, cell: grid.cellSize))
         guard shell.isEmpty == false else { return shell }
         return thicken(shell, depth: 0.1)
     }
@@ -403,7 +403,7 @@ public enum WallMeshMath {
         let center = (Double(winner) + 0.5) / Double(bucketCount) * (2 * Double.pi) - Double.pi
         let dirX = sin(center)
         let dirZ = cos(center)
-        let limit = 55.0 * Double.pi / 180
+        let limit = 75.0 * Double.pi / 180
         var aligned: [(Face, Double)] = []
         for (face, angle) in zip(faces, angles) where angleDelta(angle, center) <= limit {
             let depth = centroid(of: face, positions: positions, dirX: dirX, dirZ: dirZ)
@@ -483,7 +483,7 @@ public enum WallMeshMath {
 
     private static func solidWall(from mesh: WallMesh, cell: Double) -> WallMesh {
         guard let built = builtFront(from: mesh, cell: cell) else { return mesh }
-        let shell = ground(panel(from: process(built.samples), originX: built.originX, originY: built.originY, cell: cell))
+        let shell = smoothOutline(ground(panel(from: process(built.samples), originX: built.originX, originY: built.originY, cell: cell)))
         return thicken(shell, depth: 0.1)
     }
 
@@ -828,6 +828,56 @@ public enum WallMeshMath {
             }
         }
         return values
+    }
+
+    /// Round the stair-stepped scan outline. Interior points stay put, so a slanted face keeps its angle.
+    private static func smoothOutline(_ mesh: WallMesh) -> WallMesh {
+        guard mesh.isEmpty == false else { return mesh }
+        struct Edge: Hashable {
+            var a: Int
+            var b: Int
+            init(_ i: Int, _ j: Int) {
+                if i < j { a = i; b = j } else { a = j; b = i }
+            }
+        }
+        var uses: [Edge: Int] = [:]
+        var index = 0
+        while index + 2 < mesh.indices.count {
+            let tri = [mesh.indices[index], mesh.indices[index + 1], mesh.indices[index + 2]]
+            index += 3
+            for corner in 0 ..< 3 {
+                let key = Edge(tri[corner], tri[(corner + 1) % 3])
+                uses[key, default: 0] += 1
+            }
+        }
+        var neighbors: [Int: [Int]] = [:]
+        for (edge, count) in uses where count == 1 {
+            neighbors[edge.a, default: []].append(edge.b)
+            neighbors[edge.b, default: []].append(edge.a)
+        }
+        var positions = mesh.positions
+        for _ in 0 ..< 12 {
+            var next = positions
+            for (vertex, adjacent) in neighbors where adjacent.count >= 2 {
+                var sumX = 0.0
+                var sumY = 0.0
+                var sumZ = 0.0
+                for other in adjacent where positions.indices.contains(other) {
+                    sumX += positions[other].x
+                    sumY += positions[other].y
+                    sumZ += positions[other].z
+                }
+                let count = Double(adjacent.count)
+                let current = positions[vertex]
+                next[vertex] = MeshPoint(
+                    x: current.x * 0.4 + (sumX / count) * 0.6,
+                    y: current.y * 0.4 + (sumY / count) * 0.6,
+                    z: current.z * 0.4 + (sumZ / count) * 0.6
+                )
+            }
+            positions = next
+        }
+        return WallMesh(positions: positions, indices: mesh.indices)
     }
 
     /// Give the sheet the thickness of a climbing panel so the edge is a wall, not paper.

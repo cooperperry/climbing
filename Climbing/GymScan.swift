@@ -131,39 +131,18 @@ enum GymScanExporter {
     }
 
     private static func writeUSDZ(positions: [SIMD3<Float>], indices: [UInt32]) throws -> Data {
-        var flatPositions: [SIMD3<Float>] = []
-        var flatNormals: [SIMD3<Float>] = []
-        var index = 0
-        while index + 2 < indices.count {
-            let ia = Int(indices[index])
-            let ib = Int(indices[index + 1])
-            let ic = Int(indices[index + 2])
-            index += 3
-            guard positions.indices.contains(ia),
-                  positions.indices.contains(ib),
-                  positions.indices.contains(ic) else { continue }
-            let a = positions[ia]
-            let b = positions[ib]
-            let c = positions[ic]
-            let cross = simd_cross(b - a, c - a)
-            let length = simd_length(cross)
-            let normal = length > 0.00001 ? cross / length : SIMD3<Float>(0, 0, 1)
-            flatPositions.append(contentsOf: [a, b, c])
-            flatNormals.append(contentsOf: [normal, normal, normal])
-        }
-        guard flatPositions.count >= 3 else { throw GymScanExportError.empty }
-        let vertices = flatPositions.map { SCNVector3($0.x, $0.y, $0.z) }
-        let normals = flatNormals.map { SCNVector3($0.x, $0.y, $0.z) }
+        let vertices = positions.map { SCNVector3($0.x, $0.y, $0.z) }
+        let normals = smoothedNormals(positions: positions, indices: indices).map { SCNVector3($0.x, $0.y, $0.z) }
         let sources = [
             SCNGeometrySource(vertices: vertices),
             SCNGeometrySource(normals: normals)
         ]
-        let flatIndices = flatPositions.indices.map { UInt32($0) }
-        let indexData = flatIndices.withUnsafeBufferPointer { Data(buffer: $0) }
+        let used = (indices.count / 3) * 3
+        let indexData = indices.prefix(used).withUnsafeBufferPointer { Data(buffer: $0) }
         let element = SCNGeometryElement(
             data: indexData,
             primitiveType: .triangles,
-            primitiveCount: flatPositions.count / 3,
+            primitiveCount: used / 3,
             bytesPerIndex: MemoryLayout<UInt32>.size
         )
         let geometry = SCNGeometry(sources: sources, elements: [element])
@@ -183,6 +162,28 @@ enum GymScanExporter {
         let data = try Data(contentsOf: url)
         guard data.isEmpty == false else { throw GymScanExportError.writeFailed }
         return data
+    }
+
+    private static func smoothedNormals(positions: [SIMD3<Float>], indices: [UInt32]) -> [SIMD3<Float>] {
+        var accumulated = Array(repeating: SIMD3<Float>.zero, count: positions.count)
+        var index = 0
+        while index + 2 < indices.count {
+            let a = Int(indices[index])
+            let b = Int(indices[index + 1])
+            let c = Int(indices[index + 2])
+            index += 3
+            guard positions.indices.contains(a),
+                  positions.indices.contains(b),
+                  positions.indices.contains(c) else { continue }
+            let face = simd_cross(positions[b] - positions[a], positions[c] - positions[a])
+            accumulated[a] += face
+            accumulated[b] += face
+            accumulated[c] += face
+        }
+        return accumulated.map { value in
+            let length = simd_length(value)
+            return length > 0.00001 ? value / length : SIMD3<Float>(0, 0, 1)
+        }
     }
 
     /// Rebuild an already-saved scan into the solid wall. Used once for older files.

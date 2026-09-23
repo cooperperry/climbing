@@ -40,6 +40,25 @@ final class WallMeshTests: XCTestCase {
         XCTAssertGreaterThan((zs.max() ?? 0) - (zs.min() ?? 0), 0.45)
     }
 
+    func testWallSlantedInPlanIsKept() {
+        let degrees = 40.0 * Double.pi / 180
+        let nx = cos(degrees)
+        let nz = sin(degrees)
+        let along = MeshPoint(x: nz, y: 0, z: -nx)
+        let up = MeshPoint(x: 0, y: 2, z: 0)
+        let origin = MeshPoint(x: 0, y: 0, z: 0)
+        let wall = quad([
+            origin,
+            MeshPoint(x: along.x * 2, y: 0, z: along.z * 2),
+            MeshPoint(x: along.x * 2 + up.x, y: up.y, z: along.z * 2 + up.z),
+            up,
+        ])
+        let cleaned = WallMeshMath.climbingWall(from: wall)
+        XCTAssertFalse(cleaned.isEmpty)
+        let ys = cleaned.positions.map(\.y)
+        XCTAssertGreaterThan((ys.max() ?? 0) - (ys.min() ?? 0), 1.4)
+    }
+
     func testWallFacesTheCameraAndSitsOnTheGround() {
         let wall = quad([
             MeshPoint(x: 0, y: 5, z: 0),

@@ -1966,7 +1966,7 @@ struct GymMapView: View {
             return
         }
         gym.scanFileName = gym.id.uuidString
-        gym.scanRevision = 4
+        gym.scanRevision = 5
         gym.scanModelData = nil
         if keepRoutes == false {
             gym.wallRoutes = []
@@ -1981,11 +1981,11 @@ struct GymMapView: View {
     }
 
     private func upgradeWallIfNeeded() {
-        guard gym.scanRevision < 4, let data = GymScanStore.read(gymID: gym.id) else { return }
+        guard gym.scanRevision < 5, let data = GymScanStore.read(gymID: gym.id) else { return }
         if let refined = GymScanExporter.refine(data) {
             try? GymScanStore.write(refined, gymID: gym.id)
         }
-        gym.scanRevision = 4
+        gym.scanRevision = 5
         gym.scanFileName = gym.id.uuidString
         persistMap()
     }
