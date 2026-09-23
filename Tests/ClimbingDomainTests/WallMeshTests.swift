@@ -163,6 +163,64 @@ final class WallMeshTests: XCTestCase {
         XCTAssertLessThan((zs.max() ?? 1) - (zs.min() ?? 0), 0.8)
     }
 
+    func testSecondScanFillsOnlyWhereItMeetsTheWall() {
+        let base = wallGrid(xs: 0 ... 6, y: 0, z: 0, count: 1)
+        let more = wallGrid(xs: 4 ... 12, y: 0, z: 0, count: 1)
+        let merged = base.adding(more)
+        XCTAssertNotNil(merged)
+        let cells = Dictionary(uniqueKeysWithValues: (merged?.cells ?? []).map { ($0.x, $0) })
+        XCTAssertEqual(cells[0]?.count, 1)
+        XCTAssertEqual(cells[5]?.count, 2)
+        XCTAssertEqual(cells[12]?.count, 1)
+        XCTAssertEqual(cells[5]?.z ?? 1, 0, accuracy: 0.001)
+    }
+
+    func testABlobThatNeverMeetsTheWallIsLeftOut() {
+        var cells = wallGrid(xs: 0 ... 4, y: 0, z: 0, count: 1).cells
+        cells.append(WallScanCell(x: 0, y: 30, z: 0.4, count: 1))
+        let observation = WallGrid(
+            cellSize: 0.05, alignCos: 1, alignSin: 0, alignX: 0, alignY: 0, alignZ: 0, cells: cells
+        )
+        let base = wallGrid(xs: 0 ... 4, y: 0, z: 0, count: 1)
+        let merged = base.adding(observation)
+        XCTAssertFalse(merged?.cells.contains { $0.y == 30 } ?? true)
+    }
+
+    func testALoneDisagreementLosesToTheWall() {
+        var cells = wallGrid(xs: 0 ... 4, y: 0, z: 0, count: 1).cells
+        cells.append(WallScanCell(x: 2, y: 1, z: 0.4, count: 1))
+        let base = WallGrid(
+            cellSize: 0.05, alignCos: 1, alignSin: 0, alignX: 0, alignY: 0, alignZ: 0, cells: cells
+        )
+        var again = wallGrid(xs: 0 ... 4, y: 0, z: 0, count: 1).cells
+        again.append(WallScanCell(x: 2, y: 1, z: 0, count: 1))
+        let observation = WallGrid(
+            cellSize: 0.05, alignCos: 1, alignSin: 0, alignX: 0, alignY: 0, alignZ: 0, cells: again
+        )
+        let merged = base.adding(observation)
+        XCTAssertEqual(merged?.cells.first { $0.x == 2 && $0.y == 1 }?.z ?? 1, 0, accuracy: 0.001)
+    }
+
+    func testAConfirmedCellIgnoresAnOutlier() {
+        let base = wallGrid(xs: 0 ... 3, y: 0, z: 0, count: 2)
+        let again = wallGrid(xs: 0 ... 3, y: 0, z: 0.4, count: 1)
+        let merged = base.adding(again)
+        XCTAssertEqual(merged?.cells.first { $0.x == 1 }?.z ?? 1, 0, accuracy: 0.001)
+        XCTAssertEqual(merged?.cells.first { $0.x == 1 }?.count, 2)
+    }
+
+    private func wallGrid(xs: ClosedRange<Int>, y: Int, z: Double, count: Int) -> WallGrid {
+        WallGrid(
+            cellSize: 0.05,
+            alignCos: 1,
+            alignSin: 0,
+            alignX: 0,
+            alignY: 0,
+            alignZ: 0,
+            cells: xs.map { WallScanCell(x: $0, y: y, z: z, count: count) }
+        )
+    }
+
     private func quad(_ points: [MeshPoint]) -> WallMesh {
         WallMesh(positions: points, indices: [0, 1, 2, 0, 2, 3])
     }

@@ -262,8 +262,12 @@ struct GymMapView: View {
                 showScanPreview = true
             }
         }) {
-            GymScanCaptureView(replacesExisting: hasClimbingWall) { data in
-                storeScan(data)
+            GymScanCaptureView(
+                replacesExisting: GymScanStore.readGrid(gymID: gym.id) != nil,
+                existingGrid: GymScanStore.readGrid(gymID: gym.id),
+                worldMap: GymScanStore.readWorldMap(gymID: gym.id)
+            ) { data, grid, worldMap in
+                storeScan(data, grid: grid, worldMap: worldMap)
             }
         }
         .sheet(isPresented: $showScanPreview) {
@@ -1949,9 +1953,14 @@ struct GymMapView: View {
         gym.scanFileName != nil
     }
 
-    private func storeScan(_ data: Data) {
+    private func storeScan(_ data: Data, grid: WallGrid, worldMap: Data?) {
+        let keepRoutes = GymScanStore.readGrid(gymID: gym.id) != nil
         do {
             try GymScanStore.write(data, gymID: gym.id)
+            try GymScanStore.writeGrid(grid, gymID: gym.id)
+            if let worldMap {
+                try GymScanStore.writeWorldMap(worldMap, gymID: gym.id)
+            }
         } catch {
             scanStoreMessage = "The wall couldn't be stored on this phone. Try a shorter scan."
             return
@@ -1959,7 +1968,9 @@ struct GymMapView: View {
         gym.scanFileName = gym.id.uuidString
         gym.scanRevision = 4
         gym.scanModelData = nil
-        gym.wallRoutes = []
+        if keepRoutes == false {
+            gym.wallRoutes = []
+        }
         do {
             try context.save()
             PhoneWatchBridge.shared.publishSnapshot()

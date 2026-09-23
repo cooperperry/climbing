@@ -26,6 +26,161 @@ public struct WallMesh: Equatable, Sendable {
     public var isEmpty: Bool { positions.count < 3 || indices.count < 3 }
 }
 
+/// One cell of the shared wall. `count` is how many scans agree on it.
+public struct WallScanCell: Codable, Equatable, Sendable {
+    public var x: Int
+    public var y: Int
+    public var z: Double
+    public var count: Int
+
+    public init(x: Int, y: Int, z: Double, count: Int) {
+        self.x = x
+        self.y = y
+        self.z = z
+        self.count = count
+    }
+}
+
+/// The gym's wall in one coordinate frame. Later scans add cells; they do not start over.
+public struct WallGrid: Codable, Equatable, Sendable {
+    public var cellSize: Double
+    public var alignCos: Double
+    public var alignSin: Double
+    public var alignX: Double
+    public var alignY: Double
+    public var alignZ: Double
+    public var cells: [WallScanCell]
+
+    public init(
+        cellSize: Double,
+        alignCos: Double,
+        alignSin: Double,
+        alignX: Double,
+        alignY: Double,
+        alignZ: Double,
+        cells: [WallScanCell]
+    ) {
+        self.cellSize = cellSize
+        self.alignCos = alignCos
+        self.alignSin = alignSin
+        self.alignX = alignX
+        self.alignY = alignY
+        self.alignZ = alignZ
+        self.cells = cells
+    }
+
+    public var isEmpty: Bool { cells.count < 3 }
+
+    /// A relocalized point, moved into this grid's frame.
+    public func apply(_ point: MeshPoint) -> MeshPoint {
+        MeshPoint(
+            x: point.x * alignCos - point.z * alignSin - alignX,
+            y: point.y - alignY,
+            z: point.x * alignSin + point.z * alignCos - alignZ
+        )
+    }
+
+    /// Fold a new scan into this wall. Empty cells that touch the wall are filled.
+    /// A cell seen once loses when a later scan of that same spot disagrees.
+    /// Returns nil when the new scan never meets the wall.
+    public func adding(_ observation: WallGrid) -> WallGrid? {
+        struct Key: Hashable {
+            var x: Int
+            var y: Int
+        }
+        var base: [Key: (z: Double, count: Int)] = [:]
+        for cell in cells {
+            base[Key(x: cell.x, y: cell.y)] = (cell.z, cell.count)
+        }
+        var incoming: [Key: Double] = [:]
+        for cell in observation.cells {
+            let key = Key(x: cell.x, y: cell.y)
+            incoming[key] = max(incoming[key] ?? -1e9, cell.z)
+        }
+        guard incoming.isEmpty == false, base.isEmpty == false else { return nil }
+
+        let baseKeys = Array(base.keys)
+        func nearestZ(to key: Key, within reach: Int) -> Double? {
+            var best = reach + 1
+            var z = 0.0
+            for other in baseKeys {
+                let distance = max(abs(other.x - key.x), abs(other.y - key.y))
+                if distance < best {
+                    best = distance
+                    z = base[other]?.z ?? z
+                }
+                if best == 0 { break }
+            }
+            return best <= reach ? z : nil
+        }
+
+        var anchors: Set<Key> = []
+        for (key, z) in incoming {
+            if base[key] != nil {
+                anchors.insert(key)
+            } else if let near = nearestZ(to: key, within: 8), abs(near - z) <= 0.15 {
+                anchors.insert(key)
+            }
+        }
+        guard anchors.isEmpty == false else { return nil }
+
+        func neighborZ(around key: Key, in cells: [Key: (z: Double, count: Int)]) -> Double? {
+            var values: [Double] = []
+            for y in (key.y - 2) ... (key.y + 2) {
+                for x in (key.x - 2) ... (key.x + 2) where x != key.x || y != key.y {
+                    if let cell = cells[Key(x: x, y: y)] {
+                        values.append(cell.z)
+                    }
+                }
+            }
+            guard values.isEmpty == false else { return nil }
+            return values.sorted()[values.count / 2]
+        }
+
+        var accepted = anchors
+        var queue = Array(anchors)
+        let steps = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        while let key = queue.popLast() {
+            for step in steps {
+                let next = Key(x: key.x + step.0, y: key.y + step.1)
+                guard accepted.contains(next) == false, let nextZ = incoming[next], let here = incoming[key] else { continue }
+                guard abs(nextZ - here) <= 0.1 else { continue }
+                accepted.insert(next)
+                queue.append(next)
+            }
+        }
+
+        var result = base
+        for key in accepted {
+            guard let z = incoming[key] else { continue }
+            if let existing = result[key] {
+                if abs(existing.z - z) <= 0.08 {
+                    let count = existing.count + 1
+                    let averaged = (existing.z * Double(existing.count) + z) / Double(count)
+                    result[key] = (averaged, count)
+                } else if existing.count <= 1, let reference = neighborZ(around: key, in: base),
+                          abs(z - reference) + 0.05 < abs(existing.z - reference) {
+                    result[key] = (z, 1)
+                }
+            } else {
+                result[key] = (z, 1)
+            }
+        }
+        let cells = result.map { key, value in
+            WallScanCell(x: key.x, y: key.y, z: value.z, count: value.count)
+        }
+        return WallGrid(
+            cellSize: cellSize,
+            alignCos: alignCos,
+            alignSin: alignSin,
+            alignX: alignX,
+            alignY: alignY,
+            alignZ: alignZ,
+            cells: cells
+        )
+    }
+}
+
 /// A route drawn on the cleaned climbing wall, in the wall's own meters.
 /// `path` is the finger stroke. Older pins only have a single point.
 public struct WallRoutePin: Equatable, Sendable, Codable, Identifiable {
@@ -114,7 +269,90 @@ public enum WallMeshMath {
         guard front.isEmpty == false else { return WallMesh(positions: [], indices: []) }
         let compact = meshFrom(faces: front, positions: mesh.positions)
         guard compact.isEmpty == false else { return WallMesh(positions: [], indices: []) }
-        return solidWall(from: orient(compact), cell: max(voxelSize, 0.02))
+        return solidWall(from: orient(compact).mesh, cell: max(voxelSize, 0.02))
+    }
+
+    /// The first scan. Later scans reuse `alignCos`…`alignZ` so they land in this same frame.
+    public static func scanGrid(from mesh: WallMesh, cellSize: Double = 0.05) -> WallGrid {
+        let cell = max(cellSize, 0.02)
+        let empty = WallGrid(cellSize: cell, alignCos: 1, alignSin: 0, alignX: 0, alignY: 0, alignZ: 0, cells: [])
+        let faces = climbableFaces(in: mesh)
+        let front = frontFaces(faces, positions: mesh.positions)
+        let compact = meshFrom(faces: front, positions: mesh.positions)
+        guard compact.isEmpty == false else { return empty }
+        let oriented = orient(compact)
+        guard let built = builtFront(from: oriented.mesh, cell: cell) else { return empty }
+        var minX = Double.greatestFiniteMagnitude
+        var maxX = -Double.greatestFiniteMagnitude
+        var minY = Double.greatestFiniteMagnitude
+        var minZ = Double.greatestFiniteMagnitude
+        var maxZ = -Double.greatestFiniteMagnitude
+        var centers: [MeshPoint] = []
+        centers.reserveCapacity(built.samples.count)
+        for (key, z) in built.samples {
+            let point = MeshPoint(
+                x: built.originX + (Double(key.x) + 0.5) * cell,
+                y: built.originY + (Double(key.y) + 0.5) * cell,
+                z: z
+            )
+            centers.append(point)
+            minX = min(minX, point.x)
+            maxX = max(maxX, point.x)
+            minY = min(minY, point.y)
+            minZ = min(minZ, point.z)
+            maxZ = max(maxZ, point.z)
+        }
+        guard centers.isEmpty == false else { return empty }
+        let midX = (minX + maxX) * 0.5
+        let midZ = (minZ + maxZ) * 0.5
+        var bins: [CellKey: Double] = [:]
+        for point in centers {
+            let key = CellKey(
+                x: Int(round((point.x - midX) / cell)),
+                y: Int(round((point.y - minY) / cell))
+            )
+            bins[key] = max(bins[key] ?? -1e9, point.z - midZ)
+        }
+        return WallGrid(
+            cellSize: cell,
+            alignCos: oriented.cosAngle,
+            alignSin: oriented.sinAngle,
+            alignX: oriented.tx + midX,
+            alignY: oriented.ty + minY,
+            alignZ: oriented.tz + midZ,
+            cells: bins.map { WallScanCell(x: $0.key.x, y: $0.key.y, z: $0.value, count: 1) }
+        )
+    }
+
+    /// A later scan, already relocalized into the first scan's world, binned into that grid.
+    public static func observedGrid(from mesh: WallMesh, alignment: WallGrid) -> WallGrid {
+        let faces = climbableFaces(in: mesh)
+        let front = frontFaces(faces, positions: mesh.positions)
+        let compact = meshFrom(faces: front, positions: mesh.positions)
+        let moved = WallMesh(
+            positions: compact.positions.map { alignment.apply($0) },
+            indices: compact.indices
+        )
+        let binned = process(bins(of: moved, cell: alignment.cellSize))
+        return WallGrid(
+            cellSize: alignment.cellSize,
+            alignCos: alignment.alignCos,
+            alignSin: alignment.alignSin,
+            alignX: alignment.alignX,
+            alignY: alignment.alignY,
+            alignZ: alignment.alignZ,
+            cells: binned.map { WallScanCell(x: $0.key.x, y: $0.key.y, z: $0.value, count: 1) }
+        )
+    }
+
+    public static func mesh(from grid: WallGrid) -> WallMesh {
+        var samples: [CellKey: Double] = [:]
+        for cell in grid.cells {
+            samples[CellKey(x: cell.x, y: cell.y)] = cell.z
+        }
+        let shell = panel(from: samples, originX: -grid.cellSize / 2, originY: -grid.cellSize / 2, cell: grid.cellSize)
+        guard shell.isEmpty == false else { return shell }
+        return thicken(shell, depth: 0.1)
     }
 
     private struct Face {
@@ -228,9 +466,30 @@ public enum WallMeshMath {
     }
 
     /// Rasterize the facing surface into a continuous panel and close small gaps.
+    private struct BuiltFront {
+        var samples: [CellKey: Double]
+        var originX: Double
+        var originY: Double
+    }
+
+    private struct OrientedMesh {
+        var mesh: WallMesh
+        var cosAngle: Double
+        var sinAngle: Double
+        var tx: Double
+        var ty: Double
+        var tz: Double
+    }
+
     private static func solidWall(from mesh: WallMesh, cell: Double) -> WallMesh {
+        guard let built = builtFront(from: mesh, cell: cell) else { return mesh }
+        let shell = ground(panel(from: process(built.samples), originX: built.originX, originY: built.originY, cell: cell))
+        return thicken(shell, depth: 0.1)
+    }
+
+    private static func builtFront(from mesh: WallMesh, cell: Double) -> BuiltFront? {
         guard let minX = mesh.positions.map(\.x).min(),
-              let minY = mesh.positions.map(\.y).min() else { return mesh }
+              let minY = mesh.positions.map(\.y).min() else { return nil }
         var grid: [CellKey: Double] = [:]
         var index = 0
         while index + 2 < mesh.indices.count {
@@ -263,7 +522,11 @@ public enum WallMeshMath {
                 }
             }
         }
-        guard grid.isEmpty == false else { return mesh }
+        guard grid.isEmpty == false else { return nil }
+        return BuiltFront(samples: grid, originX: minX, originY: minY)
+    }
+
+    private static func process(_ grid: [CellKey: Double]) -> [CellKey: Double] {
         var filled = largestPatch(grid)
         for _ in 0 ..< 2 {
             filled = fillEnclosed(filled, reach: 10)
@@ -275,9 +538,45 @@ public enum WallMeshMath {
             filled = trimSpurs(filled)
         }
         filled = smooth(filled)
-        filled = constructPanels(filled)
-        let shell = ground(panel(from: filled, originX: minX, originY: minY, cell: cell))
-        return thicken(shell, depth: 0.1)
+        return constructPanels(filled)
+    }
+
+    /// Bin a mesh that is already in grid space. Keys are `round(position / cell)`.
+    private static func bins(of mesh: WallMesh, cell: Double) -> [CellKey: Double] {
+        var grid: [CellKey: Double] = [:]
+        var index = 0
+        while index + 2 < mesh.indices.count {
+            let ia = mesh.indices[index]
+            let ib = mesh.indices[index + 1]
+            let ic = mesh.indices[index + 2]
+            index += 3
+            guard mesh.positions.indices.contains(ia),
+                  mesh.positions.indices.contains(ib),
+                  mesh.positions.indices.contains(ic) else { continue }
+            let a = mesh.positions[ia]
+            let b = mesh.positions[ib]
+            let c = mesh.positions[ic]
+            let minPX = min(a.x, b.x, c.x)
+            let maxPX = max(a.x, b.x, c.x)
+            let minPY = min(a.y, b.y, c.y)
+            let maxPY = max(a.y, b.y, c.y)
+            let ix0 = Int(floor(minPX / cell)) - 1
+            let ix1 = Int(ceil(maxPX / cell)) + 1
+            let iy0 = Int(floor(minPY / cell)) - 1
+            let iy1 = Int(ceil(maxPY / cell)) + 1
+            guard ix1 - ix0 <= 200, iy1 - iy0 <= 200 else { continue }
+            if ix0 > ix1 || iy0 > iy1 { continue }
+            for ix in ix0 ... ix1 {
+                for iy in iy0 ... iy1 {
+                    let px = Double(ix) * cell
+                    let py = Double(iy) * cell
+                    guard let z = barycentricZ(px, py, a, b, c) else { continue }
+                    let key = CellKey(x: ix, y: iy)
+                    grid[key] = max(grid[key] ?? -1e9, z)
+                }
+            }
+        }
+        return grid
     }
 
     private static func barycentricZ(_ px: Double, _ py: Double, _ a: MeshPoint, _ b: MeshPoint, _ c: MeshPoint) -> Double? {
@@ -666,7 +965,7 @@ public enum WallMeshMath {
     }
 
     /// Stand the wall on y = 0 and turn its face toward +Z.
-    private static func orient(_ mesh: WallMesh) -> WallMesh {
+    private static func orient(_ mesh: WallMesh) -> OrientedMesh {
         var facingX = 0.0
         var facingZ = 0.0
         var index = 0
@@ -698,7 +997,7 @@ public enum WallMeshMath {
               let maxX = rotated.map(\.x).max(),
               let minZ = rotated.map(\.z).min(),
               let maxZ = rotated.map(\.z).max() else {
-            return mesh
+            return OrientedMesh(mesh: mesh, cosAngle: 1, sinAngle: 0, tx: 0, ty: 0, tz: 0)
         }
         let midX = (minX + maxX) * 0.5
         let midZ = (minZ + maxZ) * 0.5
@@ -707,7 +1006,14 @@ public enum WallMeshMath {
             rotated[index].y -= minY
             rotated[index].z -= midZ
         }
-        return WallMesh(positions: rotated, indices: mesh.indices)
+        return OrientedMesh(
+            mesh: WallMesh(positions: rotated, indices: mesh.indices),
+            cosAngle: cosAngle,
+            sinAngle: sinAngle,
+            tx: midX,
+            ty: minY,
+            tz: midZ
+        )
     }
 
     private static func cross(_ a: MeshPoint, _ b: MeshPoint, _ c: MeshPoint) -> (MeshPoint, Double) {

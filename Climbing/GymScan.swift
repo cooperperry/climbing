@@ -13,6 +13,8 @@ enum GymScanSupport {
 enum GymScanExportError: LocalizedError {
     case empty
     case writeFailed
+    case notLocked
+    case noOverlap
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +22,10 @@ enum GymScanExportError: LocalizedError {
             return "Point the phone at the climbing wall and walk along it. A scan of only the floor can't become a wall."
         case .writeFailed:
             return "The walls were scanned, but the model file couldn't be written. Try saving again."
+        case .notLocked:
+            return "Point the phone at the part of the wall you already scanned until it locks on, then save."
+        case .noOverlap:
+            return "This scan doesn't meet the wall yet. Overlap what you've already scanned, then keep going."
         }
     }
 }
@@ -60,6 +66,35 @@ enum GymScanExporter {
         let positions = cleaned.positions.map { SIMD3(Float($0.x), Float($0.y), Float($0.z)) }
         let indices = cleaned.indices.map { UInt32($0) }
         return try writeUSDZ(positions: positions, indices: indices)
+    }
+
+    static func usdzData(from grid: WallGrid) throws -> Data {
+        let mesh = WallMeshMath.mesh(from: grid)
+        guard mesh.isEmpty == false else { throw GymScanExportError.empty }
+        let positions = mesh.positions.map { SIMD3(Float($0.x), Float($0.y), Float($0.z)) }
+        let indices = mesh.indices.map { UInt32($0) }
+        return try writeUSDZ(positions: positions, indices: indices)
+    }
+
+    static func worldMesh(from anchors: [ARMeshAnchor]) -> WallMesh {
+        let scan = snapshot(from: anchors)
+        return WallMesh(
+            positions: scan.positions.map { MeshPoint(x: Double($0.x), y: Double($0.y), z: Double($0.z)) },
+            indices: scan.indices.map { Int($0) }
+        )
+    }
+
+    /// First scan creates the grid. A later scan must be relocalized, then it only fills cells that meet the wall.
+    static func mergedModel(existing: WallGrid?, mesh: WallMesh, relocalized: Bool) throws -> (data: Data, grid: WallGrid) {
+        if let existing {
+            guard relocalized else { throw GymScanExportError.notLocked }
+            let observed = WallMeshMath.observedGrid(from: mesh, alignment: existing)
+            guard let merged = existing.adding(observed) else { throw GymScanExportError.noOverlap }
+            return (try usdzData(from: merged), merged)
+        }
+        let grid = WallMeshMath.scanGrid(from: mesh)
+        guard grid.isEmpty == false else { throw GymScanExportError.empty }
+        return (try usdzData(from: grid), grid)
     }
 
     private static func vertex(_ source: ARGeometrySource, at index: Int) -> SIMD3<Float> {
@@ -207,12 +242,21 @@ enum GymScanExporter {
     }
 }
 
+struct GymScanCapture {
+    var mesh: WallMesh
+    var relocalized: Bool
+    var worldMap: Data?
+}
+
 struct GymScanCaptureView: View {
     var replacesExisting = false
-    var onSave: (Data) -> Void
+    var existingGrid: WallGrid?
+    var worldMap: Data?
+    var onSave: (Data, WallGrid, Data?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var surfaceCount = 0
+    @State private var relocalized = false
     @State private var saveError: String?
     @State private var isSaving = false
 
@@ -220,28 +264,29 @@ struct GymScanCaptureView: View {
         NavigationStack {
             ZStack(alignment: .bottom) {
                 if GymScanSupport.isAvailable {
-                    GymScanARRepresentable(surfaceCount: $surfaceCount)
+                    GymScanARRepresentable(surfaceCount: $surfaceCount, relocalized: $relocalized, worldMap: worldMap)
                         .ignoresSafeArea()
                     VStack(spacing: 10) {
-                        Text(surfaceCount == 0 ? "Walk slowly along the wall" : "Scanning the wall shape")
+                        Text(statusLine)
                             .font(.subheadline.bold())
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(.ultraThinMaterial, in: Capsule())
                         if replacesExisting {
-                            Text("Saving replaces this wall and the routes on it.")
+                            Text("Overlap the scanned wall, then continue. This fills the gaps. Routes stay.")
                                 .font(.caption)
                                 .foregroundStyle(.white)
+                                .multilineTextAlignment(.center)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
                                 .background(.ultraThinMaterial, in: Capsule())
                         }
-                        Button(isSaving ? "Cleaning up the wall…" : "Save wall") {
+                        Button(saveTitle) {
                             save()
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.stravaOrange)
-                        .disabled(surfaceCount == 0 || isSaving)
+                        .disabled(surfaceCount == 0 || isSaving || (worldMap != nil && relocalized == false))
                     }
                     .padding(.bottom, 24)
                 } else {
@@ -270,19 +315,42 @@ struct GymScanCaptureView: View {
         }
     }
 
+    private var statusLine: String {
+        if worldMap != nil, relocalized == false {
+            return "Point at the wall you already scanned"
+        }
+        return surfaceCount == 0 ? "Walk slowly along the wall" : "Scanning the wall shape"
+    }
+
+    private var saveTitle: String {
+        if isSaving { return worldMap == nil ? "Cleaning up the wall…" : "Adding to the wall…" }
+        return worldMap == nil ? "Save wall" : "Add to wall"
+    }
+
     private func save() {
         isSaving = true
-        let mesh = GymScanExporter.snapshot(from: GymScanSessionStore.shared.anchors)
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = Result { try GymScanExporter.usdzData(from: mesh) }
-            DispatchQueue.main.async {
-                isSaving = false
-                switch result {
-                case .success(let data):
-                    onSave(data)
-                    dismiss()
-                case .failure(let error):
-                    saveError = error.localizedDescription
+        let anchors = GymScanSessionStore.shared.anchors
+        let locked = GymScanSessionStore.shared.relocalized || worldMap == nil
+        guard let session = GymScanSessionStore.shared.session else {
+            isSaving = false
+            saveError = GymScanExportError.writeFailed.localizedDescription
+            return
+        }
+        session.getCurrentWorldMap { map, _ in
+            let archived = map.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }
+            let mesh = GymScanExporter.worldMesh(from: anchors)
+            let existing = self.existingGrid
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Result { try GymScanExporter.mergedModel(existing: existing, mesh: mesh, relocalized: locked) }
+                DispatchQueue.main.async {
+                    isSaving = false
+                    switch result {
+                    case .success(let built):
+                        onSave(built.data, built.grid, archived)
+                        dismiss()
+                    case .failure(let error):
+                        saveError = error.localizedDescription
+                    }
                 }
             }
         }
@@ -293,14 +361,19 @@ struct GymScanCaptureView: View {
 final class GymScanSessionStore {
     static let shared = GymScanSessionStore()
     var anchors: [ARMeshAnchor] = []
+    var relocalized = false
+    weak var session: ARSession?
 }
 
 struct GymScanARRepresentable: UIViewRepresentable {
     @Binding var surfaceCount: Int
+    @Binding var relocalized: Bool
+    var worldMap: Data?
 
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero)
         view.session.delegate = context.coordinator
+        GymScanSessionStore.shared.session = view.session
         let coaching = ARCoachingOverlayView()
         coaching.session = view.session
         coaching.goal = .tracking
@@ -310,6 +383,11 @@ struct GymScanARRepresentable: UIViewRepresentable {
         config.sceneReconstruction = .mesh
         config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .none
+        if let worldMap,
+           let map = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: worldMap) {
+            config.initialWorldMap = map
+            context.coordinator.expectsRelocalization = true
+        }
         view.session.run(config)
         view.debugOptions.insert(.showSceneUnderstanding)
         return view
@@ -320,17 +398,34 @@ struct GymScanARRepresentable: UIViewRepresentable {
     static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
         uiView.session.pause()
         GymScanSessionStore.shared.anchors = []
+        GymScanSessionStore.shared.relocalized = false
+        GymScanSessionStore.shared.session = nil
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(surfaceCount: $surfaceCount)
+        Coordinator(surfaceCount: $surfaceCount, relocalized: $relocalized)
     }
 
     final class Coordinator: NSObject, ARSessionDelegate {
         var surfaceCount: Binding<Int>
+        var relocalized: Binding<Bool>
+        var expectsRelocalization = false
+        private var wasRelocalized = false
 
-        init(surfaceCount: Binding<Int>) {
+        init(surfaceCount: Binding<Int>, relocalized: Binding<Bool>) {
             self.surfaceCount = surfaceCount
+            self.relocalized = relocalized
+        }
+
+        func session(_ session: ARSession, didUpdate frame: ARFrame) {
+            guard expectsRelocalization else { return }
+            let locked = frame.camera.trackingState == .normal
+            guard locked != wasRelocalized else { return }
+            wasRelocalized = locked
+            DispatchQueue.main.async {
+                GymScanSessionStore.shared.relocalized = locked
+                self.relocalized.wrappedValue = locked
+            }
         }
 
         func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
@@ -373,6 +468,31 @@ enum GymScanStore {
 
     static func hasModel(gymID: UUID) -> Bool {
         FileManager.default.fileExists(atPath: fileURL(for: gymID).path)
+    }
+
+    static func gridURL(for gymID: UUID) -> URL {
+        fileURL(for: gymID).deletingPathExtension().appendingPathExtension("wallgrid")
+    }
+
+    static func worldMapURL(for gymID: UUID) -> URL {
+        fileURL(for: gymID).deletingPathExtension().appendingPathExtension("worldmap")
+    }
+
+    static func writeGrid(_ grid: WallGrid, gymID: UUID) throws {
+        try JSONEncoder().encode(grid).write(to: gridURL(for: gymID), options: .atomic)
+    }
+
+    static func readGrid(gymID: UUID) -> WallGrid? {
+        guard let data = try? Data(contentsOf: gridURL(for: gymID)) else { return nil }
+        return try? JSONDecoder().decode(WallGrid.self, from: data)
+    }
+
+    static func writeWorldMap(_ data: Data, gymID: UUID) throws {
+        try data.write(to: worldMapURL(for: gymID), options: .atomic)
+    }
+
+    static func readWorldMap(gymID: UUID) -> Data? {
+        try? Data(contentsOf: worldMapURL(for: gymID))
     }
 }
 
