@@ -20,6 +20,8 @@ final class ClimbGym {
     var currentFloorName: String?
     /// Display names of floors whose walls are locked. Routes on a locked floor can still change.
     var lockedFloors: String = ""
+    /// LiDAR mesh of the gym, exported as USDZ. Nil until someone scans the room.
+    var scanModelData: Data?
 
     @Relationship(deleteRule: .cascade, inverse: \GymArea.gym)
     var areas: [GymArea] = []

@@ -81,6 +81,9 @@ struct GymMapView: View {
     @State private var showMapSettings = false
     @State private var showWallList = false
     @State private var showUnlockFloor = false
+    @State private var showScan = false
+    @State private var showScanPreview = false
+    @State private var openPreviewAfterScan = false
     @State private var traceMessage: String?
     @State private var didCenterMap = false
     @State private var underlayImage: UIImage?
@@ -226,11 +229,43 @@ struct GymMapView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    showScan = true
+                } label: {
+                    Image(systemName: "viewfinder")
+                }
+                .accessibilityLabel("Scan gym in 3D")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     showMapSettings = true
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
                 .accessibilityLabel("Map settings")
+            }
+        }
+        .sheet(isPresented: $showScan, onDismiss: {
+            if openPreviewAfterScan {
+                openPreviewAfterScan = false
+                showScanPreview = true
+            }
+        }) {
+            GymScanCaptureView { data in
+                gym.scanModelData = data
+                persistMap()
+                openPreviewAfterScan = true
+            }
+        }
+        .sheet(isPresented: $showScanPreview) {
+            NavigationStack {
+                if let data = gym.scanModelData {
+                    GymScanPreview(data: data)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { showScanPreview = false }
+                            }
+                        }
+                }
             }
         }
         .sheet(isPresented: $showMapSettings) {
@@ -379,6 +414,12 @@ struct GymMapView: View {
                 }
                 Section {
                     Button("Fit gym") { fitGymToScreen(in: canvasSize) }
+                    if gym.scanModelData != nil {
+                        Button("View 3D model") {
+                            showMapSettings = false
+                            showScanPreview = true
+                        }
+                    }
                     Button("Reset zoom") {
                         zoomScale = 1
                         panOffset = .zero

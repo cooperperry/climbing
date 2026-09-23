@@ -22,6 +22,7 @@ targets:
     dependencies:
       - sdk: HealthKit.framework
       - sdk: AppIntents.framework
+      - sdk: ARKit.framework
       - target: ClimbingWatch
         embed: true
     entitlements:
@@ -39,7 +40,7 @@ targets:
         INFOPLIST_KEY_NSHealthShareUsageDescription: "Climber reads heart rate, HRV, and energy from Apple Health to measure climbing strain and calories."
         INFOPLIST_KEY_NSMotionUsageDescription: "Climber uses the barometer and wrist motion to measure vertical gain and climbing vs rest."
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Climber saves photos of gym walls so you can log sends on that wall."
-        INFOPLIST_KEY_NSCameraUsageDescription: "Climber takes a photo of the wall in front of you to add it to the gym map."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Climber uses the camera and LiDAR to scan the shape of the gym and to photograph walls."
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: "Climber starts a Watch workout from the phone or a Shortcut when you arrive at the gym."
 
   ClimbingWatch:
