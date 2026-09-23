@@ -57,25 +57,24 @@ public struct ElevationFilter: Equatable, Sendable {
     }
 }
 
-/// Barometer gain counts only during a real climbing bout: heart rate in
-/// zone 2 or higher, and wrist motion well above a fidget.
+/// Barometer gain counts while the wrist is actually moving. Heart rate is not
+/// required: indoor problems are short, and a missing or lagging BPM used to
+/// leave the whole session at zero.
 public enum ClimbGainGate {
-    /// Sitting and chalking land near 0.08. Pulling on holds is louder.
-    public static let motionThreshold = 0.20
-    /// 60% of max HR is the bottom of zone 2. Below that, ignore the barometer.
-    public static let minimumMaxHRFraction = 0.60
+    /// Sitting still is near 0.05. Climbing, even a slow move, is louder.
+    public static let motionThreshold = 0.12
 
     public static func shouldCount(motionVariance: Double, bpm: Int?, maxHR: Int) -> Bool {
-        guard motionVariance >= motionThreshold else { return false }
-        guard let bpm, bpm > 0, maxHR > 0 else { return false }
-        return Double(bpm) / Double(maxHR) >= minimumMaxHRFraction
+        _ = bpm
+        _ = maxHR
+        return motionVariance >= motionThreshold
     }
 }
 
 extension ElevationFilter {
     /// Ignore rises shorter than this, or that fall back before the bout is real.
     public static let minimumClimbMeters = 1.0
-    public static let confirmSeconds: TimeInterval = 5
+    public static let confirmSeconds: TimeInterval = 3
 
     /// Follow pressure while resting. Commit height only after `confirmSeconds`
     /// of continuous climbing with at least `minimumClimbMeters` of rise.

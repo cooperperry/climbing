@@ -108,10 +108,10 @@ final class ElevationMathTests: XCTestCase {
         XCTAssertEqual(filter.gainMeters, 2.5, accuracy: 0.0001)
     }
 
-    func testGainIgnoredWithoutHeartRateOrWhileStill() {
-        XCTAssertFalse(ClimbGainGate.shouldCount(motionVariance: 0.5, bpm: nil, maxHR: 190))
+    func testGainCountsWhileMovingEvenWithoutHeartRate() {
+        XCTAssertTrue(ClimbGainGate.shouldCount(motionVariance: 0.5, bpm: nil, maxHR: 190))
         XCTAssertFalse(ClimbGainGate.shouldCount(motionVariance: 0.05, bpm: 150, maxHR: 190))
-        XCTAssertFalse(ClimbGainGate.shouldCount(motionVariance: 0.4, bpm: 90, maxHR: 190))
+        XCTAssertTrue(ClimbGainGate.shouldCount(motionVariance: 0.4, bpm: 90, maxHR: 190))
         XCTAssertTrue(ClimbGainGate.shouldCount(motionVariance: 0.4, bpm: 140, maxHR: 190))
     }
 }
